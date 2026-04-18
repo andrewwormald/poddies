@@ -1,0 +1,4 @@
+{"id":"evt-000","type":"human","ts":"<TS>","from":"human","body":"please investigate the auth bug"}
+{"id":"evt-001","type":"message","ts":"<TS>","from":"alice","body":"I'm stuck on the repro"}
+{"id":"evt-002","type":"message","ts":"<TS>","from":"sam","mentions":["bob"],"body":"@bob can you help alice with the repro?"}
+{"id":"evt-003","type":"message","ts":"<TS>","from":"bob","body":"on it, will post results"}

@@ -36,6 +36,10 @@ const DefaultMaxTurns = 8
 // negative (unlimited) value, to prevent runaway billing / CPU.
 const SafetyMaxTurns = 1000
 
+// DefaultMilestoneEvery is the default number of member turns between
+// milestone firings of the chief-of-staff facilitator.
+const DefaultMilestoneEvery = 3
+
 // Loop drives multiple member turns back-to-back using Route to pick
 // the next speaker until quiescence / max turns / error.
 type Loop struct {
@@ -63,6 +67,10 @@ type Loop struct {
 	// where the caller wants to kick a specific member even if the
 	// thread/lead would have routed somewhere else.
 	FirstMember string
+
+	// MilestoneEvery overrides DefaultMilestoneEvery. Only applies when
+	// the pod's chief-of-staff is enabled with the "milestone" trigger.
+	MilestoneEvery int
 
 	// OnEvent, if non-nil, is called for every event the loop appends
 	// (human kickoff, member responses, system routing notes). Lets
@@ -138,8 +146,19 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 		cap = SafetyMaxTurns
 	}
 
+	milestoneEvery := l.MilestoneEvery
+	if milestoneEvery <= 0 {
+		milestoneEvery = DefaultMilestoneEvery
+	}
+
 	var lastDecision RoutingDecision
 	turnsRun := 0
+	turnsSinceMilestone := 0
+	// cosRescued flips the first time the CoS intervenes on an
+	// unresolved-routing halt during this Run. We do not reset it: a
+	// second halt later in the same run is accepted as genuine, since
+	// the CoS has already had its chance to steer the conversation.
+	cosRescued := false
 	for turnsRun < cap {
 		if err := ctx.Err(); err != nil {
 			return LoopResult{
@@ -148,6 +167,22 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 				TurnsRun:     turnsRun,
 				LastDecision: lastDecision,
 			}, nil
+		}
+
+		// Milestone trigger fires before routing, once we have at least
+		// one member turn under our belt.
+		if turnsRun > 0 && turnsSinceMilestone >= milestoneEvery && hasTrigger(pod.ChiefOfStaff, config.TriggerMilestone) {
+			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit); err != nil {
+				return LoopResult{
+						Events:       appended,
+						StopReason:   LoopError,
+						TurnsRun:     turnsRun,
+						LastDecision: lastDecision,
+					},
+					fmt.Errorf("chief_of_staff milestone: %w", err)
+			}
+			turnsSinceMilestone = 0
+			continue
 		}
 
 		var decision RoutingDecision
@@ -162,6 +197,23 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 		}
 		lastDecision = decision
 		if decision.Action == ActionHalt {
+			// Unresolved-routing rescue: give the chief-of-staff one
+			// chance per halt to break the quiescence. If CoS also fails
+			// to produce a routable response, the next Route halts again
+			// and we exit cleanly.
+			if !cosRescued && hasTrigger(pod.ChiefOfStaff, config.TriggerUnresolvedRouting) {
+				cosRescued = true
+				if err := l.invokeChiefOfStaff(ctx, pod, existing, emit); err != nil {
+					return LoopResult{
+							Events:       appended,
+							StopReason:   LoopError,
+							TurnsRun:     turnsRun,
+							LastDecision: decision,
+						},
+						fmt.Errorf("chief_of_staff rescue: %w", err)
+				}
+				continue
+			}
 			return LoopResult{
 				Events:       appended,
 				StopReason:   LoopQuiescent,
@@ -230,6 +282,7 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 		}
 		emit(e)
 		turnsRun++
+		turnsSinceMilestone++
 	}
 
 	return LoopResult{
@@ -238,6 +291,52 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 		TurnsRun:     turnsRun,
 		LastDecision: lastDecision,
 	}, nil
+}
+
+// hasTrigger reports whether cos is enabled and lists t among its
+// configured triggers.
+func hasTrigger(cos config.ChiefOfStaff, t config.Trigger) bool {
+	if !cos.Enabled {
+		return false
+	}
+	for _, x := range cos.Triggers {
+		if x == t {
+			return true
+		}
+	}
+	return false
+}
+
+// invokeChiefOfStaff runs one CoS turn and appends the response as a
+// visible message event under the CoS's configured name. Wrapped so
+// both the milestone trigger path and the unresolved-routing rescue
+// path share identical semantics.
+func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events []thread.Event, emit func(thread.Event)) error {
+	cos := pod.ChiefOfStaff
+	a, err := l.AdapterLookup(string(cos.Adapter))
+	if err != nil {
+		return fmt.Errorf("resolve adapter %q: %w", cos.Adapter, err)
+	}
+	resp, err := a.Invoke(ctx, adapter.InvokeRequest{
+		Role:         adapter.RoleChiefOfStaff,
+		ChiefOfStaff: cos,
+		Pod:          *pod,
+		Thread:       events,
+		Effort:       config.EffortLow,
+	})
+	if err != nil {
+		return fmt.Errorf("invoke: %w", err)
+	}
+	e, err := l.Log.Append(thread.Event{
+		Type: thread.EventMessage,
+		From: cos.ResolvedName(),
+		Body: resp.Body,
+	})
+	if err != nil {
+		return fmt.Errorf("append CoS event: %w", err)
+	}
+	emit(e)
+	return nil
 }
 
 // loadMemberRoster returns (names, name→*Member) for the pod. Names are

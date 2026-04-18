@@ -1,0 +1,5 @@
+{"id":"evt-000","type":"human","ts":"<TS>","from":"human","body":"auth bug please"}
+{"id":"evt-001","type":"message","ts":"<TS>","from":"alice","mentions":["bob"],"body":"@bob looking at auth flow"}
+{"id":"evt-002","type":"message","ts":"<TS>","from":"bob","mentions":["alice"],"body":"@alice I see the refresh bug"}
+{"id":"evt-003","type":"message","ts":"<TS>","from":"alice","mentions":["bob"],"body":"@bob patching now"}
+{"id":"evt-004","type":"message","ts":"<TS>","from":"sam","body":"milestone: patch in progress"}
