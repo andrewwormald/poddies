@@ -1,4 +1,4 @@
-package claude
+package cliproc
 
 import (
 	"context"
@@ -17,7 +17,6 @@ func TestExecRunner_MissingBinary_ReturnsErrBinaryMissing(t *testing.T) {
 
 func TestExecRunner_EchoesStdout(t *testing.T) {
 	r := NewExecRunner()
-	// `sh -c 'printf hello'` is portable across darwin/linux.
 	stdout, _, err := r.Run(context.Background(), "sh", []string{"-c", "printf hello"}, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -67,5 +66,18 @@ func TestExecRunner_RespectsMaxOutputBytes(t *testing.T) {
 	}
 	if string(stdout) != "01234" {
 		t.Errorf("want truncated 01234, got %q", stdout)
+	}
+}
+
+func TestTruncate_Short(t *testing.T) {
+	if got := Truncate([]byte("hi"), 100); got != "hi" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTruncate_Long(t *testing.T) {
+	got := Truncate([]byte("0123456789"), 4)
+	if got != "0123...(truncated)" {
+		t.Errorf("got %q", got)
 	}
 }

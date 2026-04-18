@@ -8,9 +8,9 @@ import (
 
 	"github.com/andrewwormald/poddies/internal/cli"
 
-	// Blank import: registers the claude adapter in the global registry.
-	// Add additional adapter imports here as they are implemented.
+	// Blank imports: register adapters in the global registry.
 	_ "github.com/andrewwormald/poddies/internal/adapter/claude"
+	_ "github.com/andrewwormald/poddies/internal/adapter/gemini"
 )
 
 // version is overridden at build time via -ldflags.

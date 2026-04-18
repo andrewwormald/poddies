@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/andrewwormald/poddies/internal/adapter"
+	"github.com/andrewwormald/poddies/internal/adapter/cliproc"
 	"github.com/andrewwormald/poddies/internal/config"
 	"github.com/andrewwormald/poddies/internal/thread"
 )
@@ -20,8 +21,8 @@ const DefaultBinary = "claude"
 
 // Adapter is the Claude Code CLI adapter.
 type Adapter struct {
-	Binary string // overrideable for tests or sidecar installs
-	Runner Runner // defaults to ExecRunner
+	Binary string          // overrideable for tests or sidecar installs
+	Runner cliproc.Runner  // defaults to cliproc.NewExecRunner()
 	Roster RosterFn
 }
 
@@ -35,7 +36,7 @@ type RosterFn func(pod config.Pod) ([]config.Member, error)
 func New() *Adapter {
 	return &Adapter{
 		Binary: DefaultBinary,
-		Runner: NewExecRunner(),
+		Runner: cliproc.NewExecRunner(),
 		Roster: func(config.Pod) ([]config.Member, error) { return nil, nil },
 	}
 }
@@ -83,12 +84,12 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 
 	stdout, stderr, err := a.Runner.Run(ctx, a.Binary, args, []byte(userPrompt))
 	if err != nil {
-		return adapter.InvokeResponse{}, fmt.Errorf("claude: run failed: %w (stderr: %s)", err, truncate(stderr, 512))
+		return adapter.InvokeResponse{}, fmt.Errorf("claude: run failed: %w (stderr: %s)", err, cliproc.Truncate(stderr, 512))
 	}
 
 	var res ClaudeResult
 	if err := json.Unmarshal(stdout, &res); err != nil {
-		return adapter.InvokeResponse{}, fmt.Errorf("claude: parse output: %w (raw: %s)", err, truncate(stdout, 512))
+		return adapter.InvokeResponse{}, fmt.Errorf("claude: parse output: %w (raw: %s)", err, cliproc.Truncate(stdout, 512))
 	}
 	if res.IsError {
 		return adapter.InvokeResponse{}, fmt.Errorf("claude: returned error (%s): %s", res.Subtype, res.Result)
@@ -117,14 +118,6 @@ func BuildArgs(model, systemPrompt string) []string {
 		args = append(args, "--append-system-prompt", systemPrompt)
 	}
 	return args
-}
-
-// truncate keeps the first n bytes of b, useful for error messages.
-func truncate(b []byte, n int) string {
-	if len(b) <= n {
-		return string(b)
-	}
-	return string(b[:n]) + "...(truncated)"
 }
 
 // init auto-registers the production adapter in the global registry,

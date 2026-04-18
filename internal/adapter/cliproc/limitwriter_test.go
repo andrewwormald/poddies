@@ -1,4 +1,4 @@
-package claude
+package cliproc
 
 import (
 	"bytes"
@@ -27,7 +27,6 @@ func TestLimitWriter_OverCap_TruncatesButReportsFullWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// reports full length so subprocess isn't killed
 	if n != 5 {
 		t.Errorf("want n=5, got %d", n)
 	}

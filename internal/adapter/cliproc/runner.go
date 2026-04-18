@@ -1,4 +1,8 @@
-package claude
+// Package cliproc holds the subprocess runner shared by the CLI-based
+// agent adapters (claude, gemini, and future additions). It abstracts
+// exec.CommandContext so adapters can be unit-tested against a fake
+// runner without depending on real external binaries.
+package cliproc
 
 import (
 	"bytes"
@@ -9,16 +13,12 @@ import (
 )
 
 // Runner executes a subprocess and returns its stdout + stderr.
-// Abstracted so tests can inject a fake and exercise the adapter's
-// flag construction + output parsing without depending on a real
-// claude CLI binary.
 type Runner interface {
 	Run(ctx context.Context, bin string, args []string, stdin []byte) (stdout, stderr []byte, err error)
 }
 
 // ExecRunner runs commands via os/exec.CommandContext. It caps captured
-// stdout/stderr at MaxOutputBytes to prevent runaway allocations; use
-// NewExecRunner to construct.
+// stdout/stderr at MaxOutputBytes to prevent runaway allocations.
 type ExecRunner struct {
 	// MaxOutputBytes caps each of stdout and stderr. Zero disables the
 	// cap (unlimited). Default 8 MiB via NewExecRunner.
@@ -47,9 +47,17 @@ func (r *ExecRunner) Run(ctx context.Context, bin string, args []string, stdin [
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
 	if err := cmd.Run(); err != nil {
-		// return captured output alongside the error so callers can
-		// include stderr in their error messages.
 		return outBuf.Bytes(), errBuf.Bytes(), err
 	}
 	return outBuf.Bytes(), errBuf.Bytes(), nil
+}
+
+// Truncate returns the first n bytes of b as a string, appending an
+// ellipsis marker if b was longer. Handy for embedding captured stderr
+// in adapter error messages without exploding their size.
+func Truncate(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
+	}
+	return string(b[:n]) + "...(truncated)"
 }

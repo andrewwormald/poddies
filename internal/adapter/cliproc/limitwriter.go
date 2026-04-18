@@ -1,8 +1,6 @@
-package claude
+package cliproc
 
-import (
-	"io"
-)
+import "io"
 
 // limitedWriter wraps an io.Writer with a byte cap. Writes past the cap
 // are silently dropped; no error is returned so the subprocess isn't
