@@ -27,6 +27,11 @@ const (
 	// LoopResult still reflects any events that were appended before
 	// the error; the error itself is returned alongside.
 	LoopError LoopStopReason = "error"
+	// LoopPendingPermission — at least one permission_request event in
+	// the thread is unresolved. The loop halts until the user grants
+	// or denies via `poddies thread approve/deny`, at which point
+	// `poddies run` or `thread resume` picks up where it paused.
+	LoopPendingPermission LoopStopReason = "pending_permission"
 )
 
 // DefaultMaxTurns is used when Loop.MaxTurns is zero.
@@ -151,6 +156,17 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 		milestoneEvery = DefaultMilestoneEvery
 	}
 
+	// If the loaded thread already has unresolved permission requests,
+	// halt before doing any work so the user (or `thread approve/deny`)
+	// can resolve them first.
+	if thread.HasPendingPermissions(existing) {
+		return LoopResult{
+			Events:     appended,
+			StopReason: LoopPendingPermission,
+			TurnsRun:   0,
+		}, nil
+	}
+
 	var lastDecision RoutingDecision
 	turnsRun := 0
 	turnsSinceMilestone := 0
@@ -266,23 +282,57 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 				fmt.Errorf("invoke %s: %w", member.Name, err)
 		}
 
-		e, err := l.Log.Append(thread.Event{
-			Type: thread.EventMessage,
-			From: member.Name,
-			Body: resp.Body,
-		})
-		if err != nil {
-			return LoopResult{
-					Events:       appended,
-					StopReason:   LoopError,
-					TurnsRun:     turnsRun,
-					LastDecision: decision,
-				},
-				fmt.Errorf("append member event: %w", err)
+		if resp.Body != "" {
+			e, err := l.Log.Append(thread.Event{
+				Type: thread.EventMessage,
+				From: member.Name,
+				Body: resp.Body,
+			})
+			if err != nil {
+				return LoopResult{
+						Events:       appended,
+						StopReason:   LoopError,
+						TurnsRun:     turnsRun,
+						LastDecision: decision,
+					},
+					fmt.Errorf("append member event: %w", err)
+			}
+			emit(e)
 		}
-		emit(e)
+
+		// Append any permission requests from the response. Each gets
+		// its own thread event; the loop then halts before the next
+		// member turn (see pending-permission check at top of iter).
+		for _, pr := range resp.PermissionRequests {
+			e, err := l.Log.Append(thread.Event{
+				Type:    thread.EventPermissionRequest,
+				From:    member.Name,
+				Action:  pr.Action,
+				Payload: pr.Payload,
+			})
+			if err != nil {
+				return LoopResult{
+						Events:       appended,
+						StopReason:   LoopError,
+						TurnsRun:     turnsRun,
+						LastDecision: decision,
+					},
+					fmt.Errorf("append permission_request: %w", err)
+			}
+			emit(e)
+		}
+
 		turnsRun++
 		turnsSinceMilestone++
+
+		if thread.HasPendingPermissions(existing) {
+			return LoopResult{
+				Events:       appended,
+				StopReason:   LoopPendingPermission,
+				TurnsRun:     turnsRun,
+				LastDecision: decision,
+			}, nil
+		}
 	}
 
 	return LoopResult{

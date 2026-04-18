@@ -33,10 +33,15 @@ type RoutingDecision struct {
 //
 // Route is a pure function: no I/O, no randomness, fully table-testable.
 func Route(events []thread.Event, members map[string]struct{}, lead string) RoutingDecision {
-	// find the last non-system event
+	// find the last conversational event — system events and
+	// permission_* events are meta and never drive routing.
 	idx := -1
 	for i := len(events) - 1; i >= 0; i-- {
-		if events[i].Type == thread.EventSystem {
+		switch events[i].Type {
+		case thread.EventSystem,
+			thread.EventPermissionRequest,
+			thread.EventPermissionGrant,
+			thread.EventPermissionDeny:
 			continue
 		}
 		idx = i

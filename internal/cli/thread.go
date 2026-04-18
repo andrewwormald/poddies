@@ -116,7 +116,14 @@ func (a *App) newThreadCmd() *cobra.Command {
 		Use:   "thread",
 		Short: "Inspect and resume threads under a pod.",
 	}
-	cmd.AddCommand(a.newThreadListCmd(), a.newThreadShowCmd(), a.newThreadResumeCmd())
+	cmd.AddCommand(
+		a.newThreadListCmd(),
+		a.newThreadShowCmd(),
+		a.newThreadResumeCmd(),
+		a.newThreadPermissionsCmd(),
+		a.newThreadApproveCmd(),
+		a.newThreadDenyCmd(),
+	)
 	return cmd
 }
 
