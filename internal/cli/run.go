@@ -49,14 +49,12 @@ func resolvePod(root, requested string) (string, error) {
 func (a *App) newRunCmd() *cobra.Command {
 	var (
 		podName, memberName, threadName, message, effort string
+		maxTurns                                         int
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Run a single turn for a pod member against a thread.",
+		Short: "Run a pod. Loops across members via @mention routing until quiescence or --max-turns.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if memberName == "" {
-				return errors.New("--member is required")
-			}
 			root, err := a.rootFromApp()
 			if err != nil {
 				return err
@@ -74,30 +72,41 @@ func (a *App) newRunCmd() *cobra.Command {
 				return err
 			}
 
-			turn := &orchestrator.Turn{
+			loop := &orchestrator.Loop{
 				Root:           root,
 				Pod:            pod,
-				Member:         memberName,
 				AdapterLookup:  a.adapterLookup(),
 				Log:            log,
 				HumanMessage:   message,
+				MaxTurns:       maxTurns,
 				EffortOverride: config.Effort(effort),
+				FirstMember:    memberName,
+				OnEvent: func(e thread.Event) {
+					switch e.Type {
+					case thread.EventHuman:
+						fmt.Fprintf(a.Out, "[human] %s\n", e.Body)
+					case thread.EventMessage:
+						fmt.Fprintf(a.Out, "[%s] %s\n", e.From, e.Body)
+					case thread.EventSystem:
+						fmt.Fprintf(a.Out, "[system] %s\n", e.Body)
+					default:
+						fmt.Fprintf(a.Out, "[%s] %s\n", e.Type, e.Body)
+					}
+				},
 			}
-			res, err := turn.Run(cmd.Context())
+			res, err := loop.Run(cmd.Context())
 			if err != nil {
 				return err
 			}
-			if res.HumanEvent.Type != "" {
-				fmt.Fprintf(a.Out, "[human] %s\n", res.HumanEvent.Body)
-			}
-			fmt.Fprintf(a.Out, "[%s] %s\n", res.MemberEvent.From, res.MemberEvent.Body)
+			fmt.Fprintf(a.Out, "-- stopped: %s (turns=%d) --\n", res.StopReason, res.TurnsRun)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&podName, "pod", "", "pod name (auto-selected when only one pod exists)")
-	cmd.Flags().StringVar(&memberName, "member", "", "member to invoke (required)")
+	cmd.Flags().StringVar(&memberName, "member", "", "force the first turn for this member (subsequent turns use routing)")
 	cmd.Flags().StringVar(&threadName, "thread", "", "thread filename under pods/<pod>/threads/ (default: default.jsonl)")
-	cmd.Flags().StringVar(&message, "message", "", "optional human kickoff message appended before the turn")
-	cmd.Flags().StringVar(&effort, "effort", "", "override member effort (low|medium|high)")
+	cmd.Flags().StringVar(&message, "message", "", "optional human kickoff message appended before the loop")
+	cmd.Flags().StringVar(&effort, "effort", "", "override every member's effort (low|medium|high)")
+	cmd.Flags().IntVar(&maxTurns, "max-turns", 0, "cap on member invocations (0 = default, -1 = unlimited subject to safety cap)")
 	return cmd
 }

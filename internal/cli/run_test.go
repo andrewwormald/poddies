@@ -12,7 +12,7 @@ import (
 	"github.com/andrewwormald/poddies/internal/orchestrator"
 )
 
-// setupPodWithMember scaffolds a pod with one mock-backed member.
+// setupPodWithMember scaffolds a local poddies root + pod + one mock member.
 func setupPodWithMember(t *testing.T) (cwd, root, podName, member string) {
 	t.Helper()
 	cwd, root = initLocalRoot(t)
@@ -29,13 +29,41 @@ func setupPodWithMember(t *testing.T) (cwd, root, podName, member string) {
 	return cwd, root, "demo", "alice"
 }
 
+// setupPodWithTwoMembers scaffolds demo with alice (lead) and bob.
+func setupPodWithTwoMembers(t *testing.T) (cwd, root string) {
+	t.Helper()
+	cwd, root = initLocalRoot(t)
+	if _, err := CreatePod(root, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	// set lead=alice so human kickoff → lead → alice
+	p, err := config.LoadPod(PodDir(root, "demo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Lead = "alice"
+	if err := config.SavePod(PodDir(root, "demo"), p); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"alice", "bob"} {
+		m := config.Member{
+			Name: n, Title: "T", Adapter: config.AdapterMock,
+			Model: "m", Effort: config.EffortMedium,
+		}
+		if err := AddMember(root, "demo", m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return cwd, root
+}
+
 func appWithMock(cwd, home string, m *mock.Adapter) *App {
 	a, _, _ := newTestApp(cwd, home)
 	a.AdapterLookup = orchestrator.MapLookup(map[string]adapter.Adapter{"mock": m})
 	return a
 }
 
-func TestRunCmd_HappyPath(t *testing.T) {
+func TestRunCmd_SingleMember_MemberFlag_Runs(t *testing.T) {
 	cwd, _, _, _ := setupPodWithMember(t)
 	m := mock.New(mock.WithScript(mock.ScriptedResponse{
 		ForMember: "alice",
@@ -46,27 +74,71 @@ func TestRunCmd_HappyPath(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	out := a.Out.(interface{ String() string }).String()
-	for _, want := range []string{"[human] go", "[alice] @bob over to you"} {
+	for _, want := range []string{"[human] go", "[alice] @bob over to you", "quiescent"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
 	}
 }
 
-func TestRunCmd_MemberRequired(t *testing.T) {
-	cwd, _, _, _ := setupPodWithMember(t)
-	a := appWithMock(cwd, t.TempDir(), mock.New())
-	err := runCmd(t, a, "run", "--pod", "demo")
-	if err == nil || !strings.Contains(err.Error(), "--member") {
-		t.Errorf("want --member error, got %v", err)
+func TestRunCmd_MultiTurn_Routing(t *testing.T) {
+	cwd, _ := setupPodWithTwoMembers(t)
+	m := mock.New(mock.WithScript(
+		mock.ScriptedResponse{ForMember: "alice", Response: adapter.InvokeResponse{Body: "@bob take this"}},
+		mock.ScriptedResponse{ForMember: "bob", Response: adapter.InvokeResponse{Body: "done"}},
+	))
+	a := appWithMock(cwd, t.TempDir(), m)
+	if err := runCmd(t, a, "run", "--pod", "demo", "--message", "kickoff"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	out := a.Out.(interface{ String() string }).String()
+	for _, want := range []string{"[alice] @bob take this", "[bob] done", "quiescent"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in output:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunCmd_MaxTurnsFlag_Caps(t *testing.T) {
+	cwd, _ := setupPodWithTwoMembers(t)
+	m := mock.New(mock.WithScript(
+		mock.ScriptedResponse{ForMember: "alice", Response: adapter.InvokeResponse{Body: "@bob 1"}},
+		mock.ScriptedResponse{ForMember: "bob", Response: adapter.InvokeResponse{Body: "@alice 2"}},
+		mock.ScriptedResponse{ForMember: "alice", Response: adapter.InvokeResponse{Body: "@bob 3"}},
+	))
+	a := appWithMock(cwd, t.TempDir(), m)
+	if err := runCmd(t, a, "run", "--pod", "demo", "--message", "go", "--max-turns", "2"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	out := a.Out.(interface{ String() string }).String()
+	if !strings.Contains(out, "max_turns") {
+		t.Errorf("want max_turns stop reason, got:\n%s", out)
+	}
+	if !strings.Contains(out, "turns=2") {
+		t.Errorf("want turns=2, got:\n%s", out)
+	}
+}
+
+func TestRunCmd_NoMembers_QuiescesImmediately(t *testing.T) {
+	cwd, root := initLocalRoot(t)
+	if _, err := CreatePod(root, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	m := mock.New()
+	a := appWithMock(cwd, t.TempDir(), m)
+	if err := runCmd(t, a, "run", "--pod", "demo"); err != nil {
+		t.Fatal(err)
+	}
+	out := a.Out.(interface{ String() string }).String()
+	if !strings.Contains(out, "quiescent") {
+		t.Errorf("want quiescent, got:\n%s", out)
 	}
 }
 
 func TestRunCmd_NonexistentPod_Errors(t *testing.T) {
 	cwd, _ := initLocalRoot(t)
 	a := appWithMock(cwd, t.TempDir(), mock.New())
-	err := runCmd(t, a, "run", "--pod", "ghost", "--member", "alice")
-	if err == nil {
+	if err := runCmd(t, a, "run", "--pod", "ghost"); err == nil {
 		t.Fatal("want error for ghost pod")
 	}
 }
@@ -75,7 +147,7 @@ func TestRunCmd_AutoSelectsPod_WhenOne(t *testing.T) {
 	cwd, _, _, _ := setupPodWithMember(t)
 	m := mock.New(mock.WithScript(mock.ScriptedResponse{Response: adapter.InvokeResponse{Body: "ok"}}))
 	a := appWithMock(cwd, t.TempDir(), m)
-	if err := runCmd(t, a, "run", "--member", "alice"); err != nil {
+	if err := runCmd(t, a, "run", "--member", "alice", "--message", "go"); err != nil {
 		t.Fatalf("want auto-select, got %v", err)
 	}
 }
@@ -88,7 +160,7 @@ func TestRunCmd_MultiplePods_WithoutFlag_Errors(t *testing.T) {
 		}
 	}
 	a := appWithMock(cwd, t.TempDir(), mock.New())
-	err := runCmd(t, a, "run", "--member", "alice")
+	err := runCmd(t, a, "run")
 	if err == nil || !strings.Contains(err.Error(), "multiple pods") {
 		t.Errorf("want multiple-pods error, got %v", err)
 	}
@@ -98,7 +170,7 @@ func TestRunCmd_CustomThreadName_CreatesNamedFile(t *testing.T) {
 	cwd, root, _, _ := setupPodWithMember(t)
 	m := mock.New(mock.WithScript(mock.ScriptedResponse{Response: adapter.InvokeResponse{Body: "ok"}}))
 	a := appWithMock(cwd, t.TempDir(), m)
-	if err := runCmd(t, a, "run", "--pod", "demo", "--member", "alice", "--thread", "custom.jsonl"); err != nil {
+	if err := runCmd(t, a, "run", "--pod", "demo", "--member", "alice", "--message", "go", "--thread", "custom.jsonl"); err != nil {
 		t.Fatal(err)
 	}
 	path := ThreadPath(root, "demo", "custom.jsonl")
@@ -111,7 +183,7 @@ func TestRunCmd_DefaultsToDefaultThread(t *testing.T) {
 	cwd, root, _, _ := setupPodWithMember(t)
 	m := mock.New(mock.WithScript(mock.ScriptedResponse{Response: adapter.InvokeResponse{Body: "ok"}}))
 	a := appWithMock(cwd, t.TempDir(), m)
-	if err := runCmd(t, a, "run", "--pod", "demo", "--member", "alice"); err != nil {
+	if err := runCmd(t, a, "run", "--pod", "demo", "--member", "alice", "--message", "go"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(ThreadPath(root, "demo", DefaultThreadName)); err != nil {
@@ -123,7 +195,7 @@ func TestRunCmd_EffortOverride_ReachesAdapter(t *testing.T) {
 	cwd, _, _, _ := setupPodWithMember(t)
 	m := mock.New(mock.WithScript(mock.ScriptedResponse{Response: adapter.InvokeResponse{Body: "ok"}}))
 	a := appWithMock(cwd, t.TempDir(), m)
-	if err := runCmd(t, a, "run", "--pod", "demo", "--member", "alice", "--effort", "low"); err != nil {
+	if err := runCmd(t, a, "run", "--pod", "demo", "--member", "alice", "--message", "go", "--effort", "low"); err != nil {
 		t.Fatal(err)
 	}
 	calls := m.Calls()

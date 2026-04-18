@@ -1,0 +1,3 @@
+{"id":"evt-000","type":"human","ts":"<TS>","from":"human","body":"investigate the auth bug"}
+{"id":"evt-001","type":"message","ts":"<TS>","from":"alice","mentions":["bob"],"body":"@bob can you pull the repro while I read the auth code?"}
+{"id":"evt-002","type":"message","ts":"<TS>","from":"bob","body":"repro is ready, no further questions"}
