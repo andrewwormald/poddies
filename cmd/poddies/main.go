@@ -1,25 +1,26 @@
+// Command poddies is the CLI entrypoint. It constructs the CLI App
+// from the process environment and dispatches the cobra command tree.
 package main
 
 import (
 	"fmt"
-	"io"
 	"os"
+
+	"github.com/andrewwormald/poddies/internal/cli"
 )
 
-// version is the current poddies version. Overridden at build time via -ldflags.
+// version is overridden at build time via -ldflags.
 var version = "0.0.0-dev"
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	cli.Version = version
+	app, err := cli.NewAppFromEnv()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
-}
-
-func run(args []string, out io.Writer) error {
-	if len(args) == 0 || args[0] == "version" || args[0] == "--version" || args[0] == "-v" {
-		_, err := fmt.Fprintf(out, "poddies %s\n", version)
-		return err
+	if err := app.NewRootCmd().Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
 	}
-	return fmt.Errorf("unknown command: %s", args[0])
 }

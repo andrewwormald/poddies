@@ -1,0 +1,11 @@
+name = 'platform-pod'
+lead = 'human'
+cwd = '.'
+hierarchy = [['human'], ['alice'], ['bob', 'carol']]
+
+[chief_of_staff]
+  enabled = true
+  name = 'sam'
+  adapter = 'claude'
+  model = 'claude-haiku-4-5'
+  triggers = ['unresolved_routing', 'milestone', 'human_ask', 'drift']

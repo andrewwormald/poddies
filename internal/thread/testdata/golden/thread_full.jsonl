@@ -1,0 +1,6 @@
+{"id":"evt-000","type":"system","ts":"2026-04-18T12:00:01Z","body":"pod started"}
+{"id":"evt-001","type":"message","ts":"2026-04-18T12:00:02Z","from":"alice","mentions":["bob"],"body":"hi @bob, ready?"}
+{"id":"evt-002","type":"message","ts":"2026-04-18T12:00:03Z","from":"bob","mentions":["alice"],"body":"@alice yep"}
+{"id":"evt-003","type":"permission_request","ts":"2026-04-18T12:00:04Z","from":"alice","action":"run_shell","payload":{"cmd":"ls -la"}}
+{"id":"evt-004","type":"permission_grant","ts":"2026-04-18T12:00:05Z","from":"human","request_id":"req-1"}
+{"id":"evt-005","type":"human","ts":"2026-04-18T12:00:06Z","from":"human","body":"ship it"}

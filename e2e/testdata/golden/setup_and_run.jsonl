@@ -1,0 +1,4 @@
+{"id":"evt-000","type":"human","ts":"<TS>","from":"human","body":"kick off the auth bug investigation"}
+{"id":"evt-001","type":"message","ts":"<TS>","from":"alice","mentions":["bob"],"body":"@bob ready to look at the auth bug?"}
+{"id":"evt-002","type":"message","ts":"<TS>","from":"bob","mentions":["alice"],"body":"@alice yes, pulling the repro now"}
+{"id":"evt-003","type":"human","ts":"<TS>","from":"human","body":"ship the fix when ready"}
