@@ -9,6 +9,9 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/andrewwormald/poddies/internal/adapter"
+	"github.com/andrewwormald/poddies/internal/orchestrator"
 )
 
 // Version is set by cmd/poddies/main.go (overridable via -ldflags).
@@ -23,6 +26,21 @@ type App struct {
 	Cwd     string
 	Home    string
 	EnvRoot string // POD_ROOT override; empty = unset
+
+	// AdapterLookup resolves adapter names to implementations. Nil means
+	// "use the global adapter registry" (production wiring). Tests
+	// inject a map-backed lookup to sidestep the registry entirely.
+	AdapterLookup orchestrator.AdapterLookup
+}
+
+// adapterLookup returns a.AdapterLookup if set, otherwise adapter.Get.
+func (a *App) adapterLookup() orchestrator.AdapterLookup {
+	if a.AdapterLookup != nil {
+		return a.AdapterLookup
+	}
+	return func(name string) (adapter.Adapter, error) {
+		return adapter.Get(name)
+	}
 }
 
 // NewAppFromEnv builds an App from the current process environment,
@@ -58,6 +76,6 @@ func (a *App) NewRootCmd() *cobra.Command {
 	root.SetErr(a.Err)
 	root.SetIn(a.In)
 
-	root.AddCommand(a.newInitCmd(), a.newPodCmd(), a.newMemberCmd(), a.newDoctorCmd())
+	root.AddCommand(a.newInitCmd(), a.newPodCmd(), a.newMemberCmd(), a.newDoctorCmd(), a.newRunCmd())
 	return root
 }

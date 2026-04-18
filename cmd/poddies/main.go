@@ -7,6 +7,10 @@ import (
 	"os"
 
 	"github.com/andrewwormald/poddies/internal/cli"
+
+	// Blank import: registers the claude adapter in the global registry.
+	// Add additional adapter imports here as they are implemented.
+	_ "github.com/andrewwormald/poddies/internal/adapter/claude"
 )
 
 // version is overridden at build time via -ldflags.

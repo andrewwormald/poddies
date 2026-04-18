@@ -1,0 +1,2 @@
+{"id":"evt-000","type":"human","ts":"<TS>","from":"human","body":"kick off"}
+{"id":"evt-001","type":"message","ts":"<TS>","from":"alice","mentions":["bob"],"body":"@bob pulling the repro"}
