@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"github.com/andrewwormald/poddies/internal/config"
 	"github.com/andrewwormald/poddies/internal/orchestrator"
 	"github.com/andrewwormald/poddies/internal/thread"
+	"github.com/andrewwormald/poddies/internal/tui"
 )
 
 // DefaultThreadName is used when `poddies run` is called without --thread.
@@ -50,6 +52,7 @@ func (a *App) newRunCmd() *cobra.Command {
 	var (
 		podName, memberName, threadName, message, effort string
 		maxTurns                                         int
+		useTUI                                           bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -70,6 +73,10 @@ func (a *App) newRunCmd() *cobra.Command {
 			log := thread.Open(ThreadPath(root, pod, threadName))
 			if err := log.EnsureFile(); err != nil {
 				return err
+			}
+
+			if useTUI {
+				return a.runTUI(cmd.Context(), root, pod, log, memberName, message, maxTurns, config.Effort(effort))
 			}
 
 			loop := &orchestrator.Loop{
@@ -108,5 +115,66 @@ func (a *App) newRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&message, "message", "", "optional human kickoff message appended before the loop")
 	cmd.Flags().StringVar(&effort, "effort", "", "override every member's effort (low|medium|high)")
 	cmd.Flags().IntVar(&maxTurns, "max-turns", 0, "cap on member invocations (0 = default, -1 = unlimited subject to safety cap)")
+	cmd.Flags().BoolVar(&useTUI, "tui", false, "render the bubbletea TUI instead of stdout mode")
 	return cmd
 }
+
+// runTUI wires an orchestrator.Loop behind the TUI's StartLoop callback.
+// Each TUI submission starts a fresh Loop invocation, sharing the thread
+// log so the conversation accumulates across prompts.
+func (a *App) runTUI(ctx context.Context, root, pod string, log *thread.Log, firstMember, initialMessage string, maxTurns int, effort config.Effort) error {
+	podCfg, err := config.LoadPod(PodDir(root, pod))
+	if err != nil {
+		return err
+	}
+	memberNames, _, err := listMemberNames(PodDir(root, pod))
+	if err != nil {
+		return err
+	}
+
+	start := func(lctx context.Context, kickoff string, onEvent func(thread.Event)) (orchestrator.LoopResult, error) {
+		loop := &orchestrator.Loop{
+			Root:           root,
+			Pod:            pod,
+			AdapterLookup:  a.adapterLookup(),
+			Log:            log,
+			HumanMessage:   kickoff,
+			MaxTurns:       maxTurns,
+			EffortOverride: effort,
+			FirstMember:    firstMember,
+			OnEvent:        onEvent,
+		}
+		firstMember = "" // only the first submission respects --member
+		return loop.Run(lctx)
+	}
+
+	return tui.Run(ctx, tui.Options{
+		PodName:        podCfg.Name,
+		Members:        memberNames,
+		Lead:           podCfg.Lead,
+		StartLoop:      start,
+		InitialKickoff: initialMessage,
+	}, a.In, a.Out)
+}
+
+// listMemberNames returns the member names under podDir, sorted. Shared
+// with the orchestrator's roster loader but kept local to avoid an
+// import cycle; it intentionally produces just names, not configs.
+func listMemberNames(podDir string) ([]string, []string, error) {
+	entries, err := osReadDir(filepath.Join(podDir, config.MembersDirName))
+	if err != nil {
+		return nil, nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if len(n) > 5 && n[len(n)-5:] == ".toml" {
+			names = append(names, n[:len(n)-5])
+		}
+	}
+	return names, names, nil
+}
+
