@@ -76,6 +76,6 @@ func (a *App) NewRootCmd() *cobra.Command {
 	root.SetErr(a.Err)
 	root.SetIn(a.In)
 
-	root.AddCommand(a.newInitCmd(), a.newPodCmd(), a.newMemberCmd(), a.newDoctorCmd(), a.newRunCmd())
+	root.AddCommand(a.newInitCmd(), a.newPodCmd(), a.newMemberCmd(), a.newDoctorCmd(), a.newRunCmd(), a.newThreadCmd())
 	return root
 }

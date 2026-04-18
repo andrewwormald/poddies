@@ -14,6 +14,40 @@ import (
 	"github.com/andrewwormald/poddies/internal/tui"
 )
 
+// runStdout executes a single orchestrator.Loop in stdout streaming
+// mode — used by both `poddies run` and `poddies thread resume` when
+// --tui is not set.
+func runStdout(ctx context.Context, a *App, root, pod string, log *thread.Log, firstMember, message string, maxTurns int, effort config.Effort) error {
+	loop := &orchestrator.Loop{
+		Root:           root,
+		Pod:            pod,
+		AdapterLookup:  a.adapterLookup(),
+		Log:            log,
+		HumanMessage:   message,
+		MaxTurns:       maxTurns,
+		EffortOverride: effort,
+		FirstMember:    firstMember,
+		OnEvent: func(e thread.Event) {
+			switch e.Type {
+			case thread.EventHuman:
+				fmt.Fprintf(a.Out, "[human] %s\n", e.Body)
+			case thread.EventMessage:
+				fmt.Fprintf(a.Out, "[%s] %s\n", e.From, e.Body)
+			case thread.EventSystem:
+				fmt.Fprintf(a.Out, "[system] %s\n", e.Body)
+			default:
+				fmt.Fprintf(a.Out, "[%s] %s\n", e.Type, e.Body)
+			}
+		},
+	}
+	res, err := loop.Run(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.Out, "-- stopped: %s (turns=%d) --\n", res.StopReason, res.TurnsRun)
+	return nil
+}
+
 // DefaultThreadName is used when `poddies run` is called without --thread.
 const DefaultThreadName = "default.jsonl"
 
@@ -78,35 +112,7 @@ func (a *App) newRunCmd() *cobra.Command {
 			if useTUI {
 				return a.runTUI(cmd.Context(), root, pod, log, memberName, message, maxTurns, config.Effort(effort))
 			}
-
-			loop := &orchestrator.Loop{
-				Root:           root,
-				Pod:            pod,
-				AdapterLookup:  a.adapterLookup(),
-				Log:            log,
-				HumanMessage:   message,
-				MaxTurns:       maxTurns,
-				EffortOverride: config.Effort(effort),
-				FirstMember:    memberName,
-				OnEvent: func(e thread.Event) {
-					switch e.Type {
-					case thread.EventHuman:
-						fmt.Fprintf(a.Out, "[human] %s\n", e.Body)
-					case thread.EventMessage:
-						fmt.Fprintf(a.Out, "[%s] %s\n", e.From, e.Body)
-					case thread.EventSystem:
-						fmt.Fprintf(a.Out, "[system] %s\n", e.Body)
-					default:
-						fmt.Fprintf(a.Out, "[%s] %s\n", e.Type, e.Body)
-					}
-				},
-			}
-			res, err := loop.Run(cmd.Context())
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(a.Out, "-- stopped: %s (turns=%d) --\n", res.StopReason, res.TurnsRun)
-			return nil
+			return runStdout(cmd.Context(), a, root, pod, log, memberName, message, maxTurns, config.Effort(effort))
 		},
 	}
 	cmd.Flags().StringVar(&podName, "pod", "", "pod name (auto-selected when only one pod exists)")
