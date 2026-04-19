@@ -322,9 +322,15 @@ func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *t
 	var resumeTarget string
 	onResumeSession := func(id string) { resumeTarget = id }
 
+	cosName := ""
+	if podCfg.ChiefOfStaff.Enabled {
+		cosName = podCfg.ChiefOfStaff.ResolvedName()
+	}
+
 	err = tui.Run(ctx, tui.Options{
 		PodName:         podCfg.Name,
 		SessionID:       sessionID,
+		CoSName:         cosName,
 		Members:         memberNames,
 		Lead:            podCfg.Lead,
 		StartLoop:       start,

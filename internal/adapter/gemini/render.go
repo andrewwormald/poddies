@@ -29,6 +29,7 @@ func RenderChiefOfStaffPrompt(cos config.ChiefOfStaff, pod config.Pod, roster []
 	}
 	fmt.Fprintf(&b, "Lead: %s\n", pod.Lead)
 	b.WriteString("Conventions: use @name to address a member when they clearly own the request; otherwise answer directly.\n")
+	b.WriteString(concisenessBlock())
 
 	b.WriteString("\n---- THREAD ----\n")
 	if len(events) == 0 {
@@ -80,7 +81,8 @@ func RenderPrompt(member config.Member, pod config.Pod, roster []config.Member, 
 		}
 	}
 	fmt.Fprintf(&b, "Lead: %s\n", pod.Lead)
-	b.WriteString("Conventions: use @name to address members. Keep replies concise.\n")
+	b.WriteString("Conventions: use @name to address members.\n")
+	b.WriteString(concisenessBlock())
 	if member.SystemPromptExtra != "" {
 		b.WriteString(member.SystemPromptExtra)
 		b.WriteString("\n")
@@ -98,6 +100,16 @@ func RenderPrompt(member config.Member, pod config.Pod, roster []config.Member, 
 	b.WriteString("\n---- YOUR TURN ----\n")
 	fmt.Fprintf(&b, "You are %s. Write your next message in the thread. Use @name to address specific members. Do not repeat prior messages verbatim.\n", member.Name)
 	return b.String()
+}
+
+// concisenessBlock is the shared directive appended to every member
+// and CoS prompt. Same intent as claude.concisenessBlock (see that
+// package for the longer rationale) — the text is duplicated here to
+// keep the adapter packages independent.
+func concisenessBlock() string {
+	return "Be concise: no preamble, no 'great question!' openers, no restating the human's ask.\n" +
+		"Stay in your persona's voice; don't narrate what you're about to do — just do it.\n" +
+		"Every line is shared with the human lead and re-processed on every subsequent turn. Make it count.\n"
 }
 
 // renderEvent formats a single event into a transcript line. Shares

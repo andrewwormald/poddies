@@ -35,7 +35,7 @@ func RenderChiefOfStaffSystemPrompt(cos config.ChiefOfStaff, pod config.Pod, ros
 	fmt.Fprintf(&b, "\nLead: %s\n", pod.Lead)
 	b.WriteString("\nConventions:\n")
 	b.WriteString("- Address a specific member with @name when that member clearly owns the request.\n")
-	b.WriteString("- Keep replies concise; the thread is shared with the human lead.\n")
+	b.WriteString(concisenessBlock())
 	return b.String()
 }
 
@@ -61,13 +61,28 @@ func RenderSystemPrompt(member config.Member, pod config.Pod, roster []config.Me
 	fmt.Fprintf(&b, "\nLead: %s\n", pod.Lead)
 	b.WriteString("\nConventions:\n")
 	b.WriteString("- Use @name to address another pod member.\n")
-	b.WriteString("- Keep replies concise; the thread is shared with the human lead.\n")
+	b.WriteString(concisenessBlock())
 	if member.SystemPromptExtra != "" {
 		b.WriteString("\n")
 		b.WriteString(member.SystemPromptExtra)
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// concisenessBlock is the shared directive appended to every member
+// and CoS system prompt. Central so that a future verbosity-aware
+// pod config can swap the block without hunting through renderers.
+//
+// Every line an agent produces costs tokens (for it to output + for
+// every subsequent turn to re-read). The directive pushes agents off
+// their default "friendly assistant" register — preambles, echoed
+// asks, ceremonial acknowledgements — and onto a tighter voice that
+// respects the shared thread.
+func concisenessBlock() string {
+	return "- Be concise. No preamble, no 'great question!' openers, no restating the human's ask.\n" +
+		"- Stay in your persona's voice. Don't narrate what you're about to do — just do it.\n" +
+		"- Every line is shared with the human lead and re-processed on every subsequent turn. Make it count.\n"
 }
 
 // RenderUserPromptForCoS is the CoS-flavored counterpart of

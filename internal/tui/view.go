@@ -112,32 +112,41 @@ func (m Model) renderUsage() string {
 }
 
 // renderTranscript formats the event list into the viewport-ready text.
-// Keeps formatting consistent with the stdout renderer so users moving
-// between modes see the same shape.
-func renderTranscript(events []thread.Event, width int) string {
+// Per-user colouring and body wrapping are applied so long responses
+// don't overflow and speakers are visually distinct.
+func renderTranscript(events []thread.Event, cosName string, width int) string {
 	if len(events) == 0 {
 		return metaStyle.Render("(no events yet — type a message below to kick off)")
 	}
 	var b strings.Builder
 	for _, e := range events {
-		b.WriteString(renderEvent(e, width))
+		b.WriteString(renderEvent(e, cosName, width))
 		b.WriteByte('\n')
 	}
 	return b.String()
 }
 
-func renderEvent(e thread.Event, width int) string {
+func renderEvent(e thread.Event, cosName string, width int) string {
+	// Body wrap width: give the body most of the terminal, minus a
+	// conservative prefix allowance. We don't try to perfectly align
+	// continuation lines under the first-line content — that would need
+	// rune-width calculation against ANSI escapes. Plain left-column
+	// continuation is good enough for v1 and matches k9s's log pane.
+	bodyWidth := width - 2
+	if bodyWidth < 20 {
+		bodyWidth = 20
+	}
 	switch e.Type {
 	case thread.EventHuman:
-		return humanStyle.Render("[human]") + " " + e.Body
+		return styledName("human", cosName) + " " + wrapText(e.Body, bodyWidth)
 	case thread.EventMessage:
 		from := e.From
 		if from == "" {
 			from = "?"
 		}
-		return lipgloss.NewStyle().Bold(true).Render("["+from+"]") + " " + e.Body
+		return styledName(from, cosName) + " " + wrapText(e.Body, bodyWidth)
 	case thread.EventSystem:
-		return systemStyle.Render("[system] " + e.Body)
+		return systemStyle.Render("[system] " + wrapText(e.Body, bodyWidth))
 	case thread.EventPermissionRequest:
 		return errStyle.Render(fmt.Sprintf("[permission_request from %s] action=%s", e.From, e.Action))
 	case thread.EventPermissionGrant:
@@ -145,7 +154,7 @@ func renderEvent(e thread.Event, width int) string {
 	case thread.EventPermissionDeny:
 		return systemStyle.Render(fmt.Sprintf("[permission_deny by %s for %s]", e.From, e.RequestID))
 	default:
-		return systemStyle.Render(fmt.Sprintf("[%s] %s", e.Type, e.Body))
+		return systemStyle.Render(fmt.Sprintf("[%s] %s", e.Type, wrapText(e.Body, bodyWidth)))
 	}
 }
 

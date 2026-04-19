@@ -98,6 +98,12 @@ type Options struct {
 	// instance. Shown in the header for orientation.
 	SessionID string
 
+	// CoSName is the resolved chief-of-staff name for the current pod
+	// (empty when CoS is disabled). The transcript uses it to tint the
+	// CoS's messages with a dedicated colour so readers can tell
+	// facilitator messages apart from member messages.
+	CoSName string
+
 	// OnListSessions returns the recent sessions under this root,
 	// sorted newest first. Used by /resume.
 	OnListSessions func() []SessionSummary

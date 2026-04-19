@@ -138,7 +138,7 @@ func (m Model) handleResume(arg string) (tea.Model, tea.Cmd) {
 		}
 		m.events = append(m.events, resumePreview(b.String()))
 		if m.ready {
-			m.viewport.SetContent(renderTranscript(m.events, m.viewport.Width))
+			m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, m.viewport.Width))
 			m.viewport.GotoBottom()
 		}
 		m.statusLine = fmt.Sprintf("%d session(s) — pick one with /resume <id>", len(list))
@@ -187,7 +187,7 @@ func (m Model) handleExport() (tea.Model, tea.Cmd) {
 	// block so the user can select/copy it without leaving the TUI.
 	m.events = append(m.events, exportPreview(data))
 	if m.ready {
-		m.viewport.SetContent(renderTranscript(m.events, m.viewport.Width))
+		m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, m.viewport.Width))
 		m.viewport.GotoBottom()
 	}
 	return m, waitForSubMsg(m.sub)

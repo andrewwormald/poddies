@@ -104,7 +104,7 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.viewport.Height = vpH
 	m.input.Width = msg.Width - 4
 	m.ready = true
-	m.viewport.SetContent(renderTranscript(m.events, msg.Width))
+	m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, msg.Width))
 	m.viewport.GotoBottom()
 	return m, nil
 }
@@ -241,7 +241,7 @@ func (m Model) submit(text string) (tea.Model, tea.Cmd) {
 func (m Model) onEvent(msg EventMsg) (tea.Model, tea.Cmd) {
 	m.events = append(m.events, msg.Event)
 	if m.ready {
-		m.viewport.SetContent(renderTranscript(m.events, m.viewport.Width))
+		m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, m.viewport.Width))
 		m.viewport.GotoBottom()
 	}
 	return m, waitForSubMsg(m.sub)

@@ -21,6 +21,11 @@ var ErrMemberNotFound = errors.New("member not found")
 // (the orchestrator would detour @member-name invocations to the CoS).
 var ErrCoSNameCollision = errors.New("member name collides with chief-of-staff name")
 
+// AdapterPatch is a tiny convenience for tests constructing a
+// MemberPatch with a specific adapter — keeps test files free of
+// config.Adapter temporaries at the call site.
+func AdapterPatch(a string) config.Adapter { return config.Adapter(a) }
+
 // AddMember validates m and writes it to <root>/pods/<pod>/members/<name>.toml.
 // Errors if the pod does not exist or if a member with that name already exists.
 func AddMember(root, pod string, m config.Member) error {

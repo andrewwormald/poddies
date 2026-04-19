@@ -8,6 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/andrewwormald/poddies/internal/adapter/claude"
+	"github.com/andrewwormald/poddies/internal/adapter/gemini"
 	"github.com/andrewwormald/poddies/internal/config"
 	"github.com/andrewwormald/poddies/internal/orchestrator"
 	"github.com/andrewwormald/poddies/internal/thread"
@@ -86,7 +88,7 @@ func (a *App) newRunCmd() *cobra.Command {
 	var (
 		podName, memberName, threadName, message, effort string
 		maxTurns                                         int
-		useTUI                                           bool
+		useTUI, dumpPrompt                               bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -109,6 +111,9 @@ func (a *App) newRunCmd() *cobra.Command {
 				return err
 			}
 
+			if dumpPrompt {
+				return a.dumpPrompt(root, pod, memberName, log)
+			}
 			if useTUI {
 				return a.runTUI(cmd.Context(), root, pod, log, memberName, message, maxTurns, config.Effort(effort))
 			}
@@ -122,7 +127,71 @@ func (a *App) newRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&effort, "effort", "", "override every member's effort (low|medium|high)")
 	cmd.Flags().IntVar(&maxTurns, "max-turns", 0, "cap on member invocations (0 = default, -1 = unlimited subject to safety cap)")
 	cmd.Flags().BoolVar(&useTUI, "tui", false, "render the bubbletea TUI instead of stdout mode")
+	cmd.Flags().BoolVar(&dumpPrompt, "dump-prompt", false, "print what the adapter would send, without invoking it (audit / debug)")
 	return cmd
+}
+
+// dumpPrompt is the `--dump-prompt` implementation. Renders what the
+// named member's adapter *would* send given the current thread, and
+// prints it to a.Out without spawning any subprocess. Intended as a
+// token-efficiency audit tool — compare turn-1 vs turn-2 output to
+// see what chunks of prompt are duplicated (persona, roster,
+// conventions) and could be cached or minified.
+func (a *App) dumpPrompt(root, pod, memberName string, log *thread.Log) error {
+	podCfg, err := config.LoadPod(PodDir(root, pod))
+	if err != nil {
+		return err
+	}
+	if memberName == "" {
+		names, err := listMemberNames(PodDir(root, pod))
+		if err != nil {
+			return err
+		}
+		if len(names) == 0 {
+			return fmt.Errorf("--dump-prompt: no members in pod %q", pod)
+		}
+		memberName = names[0]
+	}
+	member, err := config.LoadMember(PodDir(root, pod), memberName)
+	if err != nil {
+		return err
+	}
+	events, err := log.Load()
+	if err != nil {
+		return err
+	}
+
+	// Build the full roster so the renderer can embed it the way the
+	// real adapter call would.
+	rosterNames, err := listMemberNames(PodDir(root, pod))
+	if err != nil {
+		return err
+	}
+	var roster []config.Member
+	for _, n := range rosterNames {
+		m, err := config.LoadMember(PodDir(root, pod), n)
+		if err != nil {
+			continue
+		}
+		roster = append(roster, *m)
+	}
+
+	fmt.Fprintf(a.Out, "=== dump-prompt  pod=%s  member=%s  adapter=%s  thread-events=%d ===\n",
+		pod, memberName, member.Adapter, len(events))
+	switch member.Adapter {
+	case config.AdapterClaude:
+		fmt.Fprintln(a.Out, "--- SYSTEM ---")
+		fmt.Fprintln(a.Out, claude.RenderSystemPrompt(*member, *podCfg, roster))
+		fmt.Fprintln(a.Out, "--- USER ---")
+		fmt.Fprintln(a.Out, claude.RenderUserPrompt(*member, events))
+	case config.AdapterGemini:
+		fmt.Fprintln(a.Out, gemini.RenderPrompt(*member, *podCfg, roster, events))
+	case config.AdapterMock:
+		fmt.Fprintln(a.Out, "(mock adapter has no prompt — it returns canned responses)")
+	default:
+		return fmt.Errorf("--dump-prompt: adapter %q does not expose a renderer", member.Adapter)
+	}
+	return nil
 }
 
 // runTUI wires an orchestrator.Loop behind the TUI's StartLoop callback.

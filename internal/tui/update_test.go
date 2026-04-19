@@ -263,7 +263,7 @@ func TestRenderEvent_CoversAllTypes(t *testing.T) {
 		{Type: "future_type", Body: "x"},
 	}
 	for _, e := range cases {
-		got := renderEvent(e, 80)
+		got := renderEvent(e, "", 80)
 		if got == "" {
 			t.Errorf("empty rendering for %+v", e)
 		}
