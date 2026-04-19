@@ -81,7 +81,12 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 		return adapter.InvokeResponse{}, fmt.Errorf("gemini: model must be set on member or chief_of_staff")
 	}
 
-	prompt := RenderPrompt(req.Member, req.Pod, roster, req.Thread)
+	var prompt string
+	if req.Role == adapter.RoleChiefOfStaff {
+		prompt = RenderChiefOfStaffPrompt(req.ChiefOfStaff, req.Pod, roster, req.Thread)
+	} else {
+		prompt = RenderPrompt(req.Member, req.Pod, roster, req.Thread)
+	}
 	args := BuildArgs(model)
 
 	stdout, stderr, err := a.Runner.Run(ctx, a.Binary, args, []byte(prompt))

@@ -41,7 +41,10 @@ type Call struct {
 
 // Adapter is the mock adapter. It is NOT registered globally by default;
 // tests pass an instance directly to orchestrators or register it on a
-// per-test basis via adapter.Register.
+// per-test basis via adapter.Register. A production-flavored instance
+// (with Auto=true) is registered at startup from cmd/poddies so that
+// users reaching for `--adapter mock` during onboarding / demos get a
+// working pod without installing any real CLI.
 type Adapter struct {
 	mu     sync.Mutex
 	name   string
@@ -49,6 +52,11 @@ type Adapter struct {
 	cursor int
 	calls  []Call
 	strict bool
+	// Auto, when true, produces a canned acknowledgement response when
+	// the scripted queue is exhausted instead of returning an error.
+	// Used by the production registration so the mock is actually
+	// usable end-to-end; tests leave this off (default false).
+	Auto bool
 }
 
 // Option configures a new mock Adapter.
@@ -63,6 +71,10 @@ func WithScript(s ...ScriptedResponse) Option { return func(a *Adapter) { a.scri
 // WithStrict, when true, makes any unmet WantContains assertion a hard
 // error rather than a soft mismatch. Default true.
 func WithStrict(strict bool) Option { return func(a *Adapter) { a.strict = strict } }
+
+// WithAuto enables auto-canned responses when the scripted queue is
+// exhausted. Intended for production registration, not tests.
+func WithAuto(auto bool) Option { return func(a *Adapter) { a.Auto = auto } }
 
 // New constructs a mock Adapter. Default name is "mock".
 func New(opts ...Option) *Adapter {
@@ -112,6 +124,22 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 	defer a.mu.Unlock()
 
 	if a.cursor >= len(a.script) {
+		if a.Auto {
+			memberName := req.Member.Name
+			if req.Role == adapter.RoleChiefOfStaff {
+				memberName = req.ChiefOfStaff.ResolvedName()
+			}
+			a.calls = append(a.calls, Call{
+				MemberName:   memberName,
+				Role:         req.Role,
+				ThreadLength: len(req.Thread),
+				Effort:       string(req.Effort),
+			})
+			return adapter.InvokeResponse{
+				Body:       autoResponse(memberName, req.Thread),
+				StopReason: adapter.StopDone,
+			}, nil
+		}
 		return adapter.InvokeResponse{}, fmt.Errorf("mock: script exhausted at call #%d (member=%q)", a.cursor+1, req.Member.Name)
 	}
 	s := a.script[a.cursor]
@@ -163,4 +191,37 @@ func renderThreadForAssert(events []thread.Event) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// autoResponse builds a canned reply for Auto-mode invocations. It
+// surfaces enough context (member name + snippet of the triggering
+// human message, if present) that the thread still reads sensibly
+// without any real LLM behind it — good enough for demos, onboarding,
+// and CI smoke tests.
+func autoResponse(memberName string, events []thread.Event) string {
+	last := ""
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if e.Type == thread.EventHuman || e.Type == thread.EventMessage {
+			last = e.Body
+			break
+		}
+	}
+	if last == "" {
+		return "(mock) " + memberName + " here — ready when you are."
+	}
+	snippet := last
+	if len(snippet) > 120 {
+		snippet = snippet[:117] + "..."
+	}
+	return "(mock) " + memberName + " acknowledged: " + snippet
+}
+
+// init registers a production-flavored mock adapter (Auto=true) so
+// `--adapter mock` works end-to-end without the user needing claude or
+// gemini installed. Tests that touch the global registry reset it
+// before each test (see internal/adapter), so this registration is
+// invisible to them.
+func init() {
+	adapter.Register(New(WithAuto(true)))
 }

@@ -28,6 +28,10 @@ type ThreadInfo struct {
 	Events     int       // count of events in the file
 	LastFrom   string    // from-field of the last non-system event (or "")
 	ModifiedAt time.Time // file mtime
+	// Corrupt is true when the underlying JSONL file failed to parse.
+	// Callers should render it distinctly so a broken file is never
+	// confused with a legitimately empty new thread.
+	Corrupt bool
 }
 
 // ListThreads walks <root>/pods/<pod>/threads/ and returns one ThreadInfo
@@ -57,11 +61,14 @@ func ListThreads(root, pod string) ([]ThreadInfo, error) {
 		}
 		events, err := thread.Open(fullPath).Load()
 		if err != nil {
-			// don't block listing on one corrupt file; record as 0-event
+			// don't block listing on one corrupt file, but flag it so
+			// the CLI can render a distinct marker rather than silently
+			// showing events=0.
 			out = append(out, ThreadInfo{
 				Name:       strings.TrimSuffix(name, ".jsonl"),
 				Path:       fullPath,
 				ModifiedAt: info.ModTime(),
+				Corrupt:    true,
 			})
 			continue
 		}
@@ -151,6 +158,11 @@ func (a *App) newThreadListCmd() *cobra.Command {
 				return nil
 			}
 			for _, t := range infos {
+				if t.Corrupt {
+					fmt.Fprintf(a.Out, "%-24s CORRUPT (failed to parse)  %s\n",
+						t.Name, t.ModifiedAt.Format(time.RFC3339))
+					continue
+				}
 				last := t.LastFrom
 				if last == "" {
 					last = "-"

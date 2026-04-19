@@ -11,6 +11,7 @@ import (
 	// Blank imports: register adapters in the global registry.
 	_ "github.com/andrewwormald/poddies/internal/adapter/claude"
 	_ "github.com/andrewwormald/poddies/internal/adapter/gemini"
+	_ "github.com/andrewwormald/poddies/internal/adapter/mock"
 )
 
 // version is overridden at build time via -ldflags.

@@ -103,8 +103,18 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 		return adapter.InvokeResponse{}, fmt.Errorf("claude: model must be set on member or chief_of_staff")
 	}
 
-	systemPrompt := RenderSystemPrompt(req.Member, req.Pod, roster)
+	var systemPrompt string
+	if req.Role == adapter.RoleChiefOfStaff {
+		systemPrompt = RenderChiefOfStaffSystemPrompt(req.ChiefOfStaff, req.Pod, roster)
+	} else {
+		systemPrompt = RenderSystemPrompt(req.Member, req.Pod, roster)
+	}
 	userPrompt := RenderUserPrompt(req.Member, req.Thread)
+	if req.Role == adapter.RoleChiefOfStaff {
+		// Give the CoS a call-to-action addressed to itself rather than
+		// to a zero-value member name.
+		userPrompt = RenderUserPromptForCoS(req.ChiefOfStaff, req.Thread)
+	}
 
 	if a.OnToken != nil {
 		return a.invokeStreaming(ctx, model, systemPrompt, userPrompt)
@@ -117,8 +127,12 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 		return adapter.InvokeResponse{}, fmt.Errorf("claude: run failed: %w (stderr: %s)", err, cliproc.Truncate(stderr, 512))
 	}
 
+	// Some claude CLI versions emit a preamble line (auth warning, update
+	// notice) before the JSON object. Strip any leading non-JSON bytes
+	// so a noisy CLI doesn't break the parse.
+	payload := trimToJSON(stdout)
 	var res ClaudeResult
-	if err := json.Unmarshal(stdout, &res); err != nil {
+	if err := json.Unmarshal(payload, &res); err != nil {
 		return adapter.InvokeResponse{}, fmt.Errorf("claude: parse output: %w (raw: %s)", err, cliproc.Truncate(stdout, 512))
 	}
 	if res.IsError {
@@ -202,6 +216,20 @@ func (a *Adapter) invokeStreaming(ctx context.Context, model, systemPrompt, user
 		Mentions:   thread.ParseMentions(text),
 		StopReason: adapter.StopDone,
 	}, nil
+}
+
+// trimToJSON returns b from the first '{' byte onward. Lets the
+// non-streaming Claude parser tolerate a preamble line (auth warning,
+// update notice, etc.) emitted before the JSON object. If no '{' is
+// present the original bytes are returned unchanged so json.Unmarshal
+// surfaces its normal error message.
+func trimToJSON(b []byte) []byte {
+	for i, c := range b {
+		if c == '{' {
+			return b[i:]
+		}
+	}
+	return b
 }
 
 // BuildArgs assembles the argv passed to `claude`. Exported so tests

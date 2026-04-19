@@ -8,6 +8,37 @@ import (
 	"github.com/andrewwormald/poddies/internal/thread"
 )
 
+// RenderChiefOfStaffSystemPrompt builds the system prompt for a
+// chief-of-staff invocation. Before this existed the adapter was
+// passing a zero-value Member into RenderSystemPrompt, producing a
+// system prompt that identified the CoS as a nameless member with no
+// role — effectively giving it no instructions at all. This prompt
+// tells the CoS who it is, what it's there to do, and lists the pod
+// roster so it can route via @mention.
+func RenderChiefOfStaffSystemPrompt(cos config.ChiefOfStaff, pod config.Pod, roster []config.Member) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "You are %q, the chief-of-staff facilitator for the %q pod.\n", cos.ResolvedName(), pod.Name)
+	b.WriteString("\nYour role is to keep the pod moving:\n")
+	b.WriteString("- Route routing tie-breaks (when no member was @mentioned).\n")
+	b.WriteString("- Post concise milestone summaries for the human lead.\n")
+	b.WriteString("- Handle requests that don't clearly land on any pod member.\n")
+	if len(roster) > 0 {
+		b.WriteString("\nPod members:\n")
+		for _, m := range roster {
+			fmt.Fprintf(&b, "- %s: %s", m.Name, m.Title)
+			if len(m.Skills) > 0 {
+				fmt.Fprintf(&b, " [skills: %s]", strings.Join(m.Skills, ", "))
+			}
+			b.WriteString("\n")
+		}
+	}
+	fmt.Fprintf(&b, "\nLead: %s\n", pod.Lead)
+	b.WriteString("\nConventions:\n")
+	b.WriteString("- Address a specific member with @name when that member clearly owns the request.\n")
+	b.WriteString("- Keep replies concise; the thread is shared with the human lead.\n")
+	return b.String()
+}
+
 // RenderSystemPrompt builds the text passed to claude via
 // --append-system-prompt. It combines role, persona, and pod context
 // so the agent behaves consistently with its config.
@@ -36,6 +67,25 @@ func RenderSystemPrompt(member config.Member, pod config.Pod, roster []config.Me
 		b.WriteString(member.SystemPromptExtra)
 		b.WriteString("\n")
 	}
+	return b.String()
+}
+
+// RenderUserPromptForCoS is the CoS-flavored counterpart of
+// RenderUserPrompt. Uses the CoS name in the call-to-action so the
+// model doesn't get told "you are " (zero-value).
+func RenderUserPromptForCoS(cos config.ChiefOfStaff, events []thread.Event) string {
+	var b strings.Builder
+	if len(events) == 0 {
+		b.WriteString("The thread is empty.\n")
+	} else {
+		b.WriteString("Conversation so far:\n\n")
+		for _, e := range events {
+			b.WriteString(renderEvent(e))
+		}
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(&b, "You are %s, the chief-of-staff. Respond with your next message in the thread.\n", cos.ResolvedName())
+	b.WriteString("If a specific pod member clearly owns the request, use @name to hand it to them. Otherwise answer directly and completely.\n")
 	return b.String()
 }
 

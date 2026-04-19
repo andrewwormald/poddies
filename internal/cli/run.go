@@ -133,7 +133,7 @@ func (a *App) runTUI(ctx context.Context, root, pod string, log *thread.Log, fir
 	if err != nil {
 		return err
 	}
-	memberNames, _, err := listMemberNames(PodDir(root, pod))
+	memberNames, err := listMemberNames(PodDir(root, pod))
 	if err != nil {
 		return err
 	}
@@ -218,7 +218,7 @@ func (a *App) runTUI(ctx context.Context, root, pod string, log *thread.Log, fir
 		return err
 	}
 	listMembers := func() []string {
-		names, _, err := listMemberNames(PodDir(root, pod))
+		names, err := listMemberNames(PodDir(root, pod))
 		if err != nil {
 			return nil
 		}
@@ -245,13 +245,13 @@ func (a *App) runTUI(ctx context.Context, root, pod string, log *thread.Log, fir
 	}, a.In, a.Out)
 }
 
-// listMemberNames returns the member names under podDir, sorted. Shared
-// with the orchestrator's roster loader but kept local to avoid an
-// import cycle; it intentionally produces just names, not configs.
-func listMemberNames(podDir string) ([]string, []string, error) {
+// listMemberNames returns the member names under podDir. Shared with
+// the orchestrator's roster loader but kept local to avoid an import
+// cycle; it intentionally produces just names, not configs.
+func listMemberNames(podDir string) ([]string, error) {
 	entries, err := osReadDir(filepath.Join(podDir, config.MembersDirName))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var names []string
 	for _, e := range entries {
@@ -263,6 +263,6 @@ func listMemberNames(podDir string) ([]string, []string, error) {
 			names = append(names, n[:len(n)-5])
 		}
 	}
-	return names, names, nil
+	return names, nil
 }
 

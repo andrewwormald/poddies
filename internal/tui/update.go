@@ -175,6 +175,11 @@ func (m Model) submit(text string) (tea.Model, tea.Cmd) {
 	if len(text) > 0 && text[0] == '/' {
 		return m.dispatchSlashCommand(text)
 	}
+	if m.state == StateRunning {
+		// ignore double-submits (e.g. from maybeResume firing while a
+		// previous loop's goroutine is still draining into sub).
+		return m, waitForSubMsg(m.sub)
+	}
 	if m.opts.StartLoop == nil {
 		m.lastErr = fmt.Errorf("start-loop not configured")
 		m.statusLine = "error: start-loop not configured"
@@ -291,8 +296,15 @@ func (m Model) onDenyAll() (tea.Model, tea.Cmd) {
 
 // maybeResume re-kicks the loop with an empty message when all pending
 // requests have been handled, so agents can continue automatically.
+// Guards against re-entry while a loop is already running — without
+// this, rapid-fire approve/deny presses (or programmatic sequences)
+// can start a second goroutine that races with the first, drops
+// messages, and leaks ctx cancellation handles.
 func (m Model) maybeResume() (tea.Model, tea.Cmd) {
 	if len(m.pendingRequests) > 0 {
+		return m, waitForSubMsg(m.sub)
+	}
+	if m.state == StateRunning {
 		return m, waitForSubMsg(m.sub)
 	}
 	return m.submit("")

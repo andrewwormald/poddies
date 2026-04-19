@@ -34,7 +34,7 @@ func TestRunCmd_TUIFlagExists(t *testing.T) {
 
 func TestListMemberNames_ReadsToml(t *testing.T) {
 	_, root, _, _ := setupPodWithMember(t)
-	names, _, err := listMemberNames(PodDir(root, "demo"))
+	names, err := listMemberNames(PodDir(root, "demo"))
 	if err != nil {
 		t.Fatal(err)
 	}

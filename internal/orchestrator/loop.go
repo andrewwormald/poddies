@@ -228,6 +228,12 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 						},
 						fmt.Errorf("chief_of_staff rescue: %w", err)
 				}
+				// Reset the milestone counter so the next member turn
+				// doesn't double-fire (rescue + milestone). Without this
+				// reset a pod with both triggers configured would see
+				// two CoS invocations in quick succession the moment the
+				// rescued turn lands on a milestone boundary.
+				turnsSinceMilestone = 0
 				continue
 			}
 			return LoopResult{
@@ -376,6 +382,15 @@ func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events [
 	})
 	if err != nil {
 		return fmt.Errorf("invoke: %w", err)
+	}
+	// Skip empty-body responses entirely. Appending an empty message
+	// event would poison the thread: Route's last-non-meta-event lookup
+	// would return the empty event, which has no mentions, halting the
+	// loop forever. The CoS simply having nothing to add is a valid
+	// outcome — it just means the loop continues via whatever the last
+	// real turn was.
+	if resp.Body == "" {
+		return nil
 	}
 	e, err := l.Log.Append(thread.Event{
 		Type: thread.EventMessage,

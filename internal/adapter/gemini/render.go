@@ -8,6 +8,42 @@ import (
 	"github.com/andrewwormald/poddies/internal/thread"
 )
 
+// RenderChiefOfStaffPrompt builds the single prompt for a chief-of-staff
+// invocation. Replaces the previous (broken) path that passed a
+// zero-value Member into RenderPrompt — that left the CoS with no
+// identity or role instructions at all.
+func RenderChiefOfStaffPrompt(cos config.ChiefOfStaff, pod config.Pod, roster []config.Member, events []thread.Event) string {
+	var b strings.Builder
+	b.WriteString("---- SYSTEM ----\n")
+	fmt.Fprintf(&b, "You are %q, the chief-of-staff facilitator for the %q pod.\n", cos.ResolvedName(), pod.Name)
+	b.WriteString("Your role: route tie-breaks, milestone summaries, handle requests that don't clearly land on a pod member.\n")
+	if len(roster) > 0 {
+		b.WriteString("Pod members:\n")
+		for _, m := range roster {
+			fmt.Fprintf(&b, "- %s: %s", m.Name, m.Title)
+			if len(m.Skills) > 0 {
+				fmt.Fprintf(&b, " [skills: %s]", strings.Join(m.Skills, ", "))
+			}
+			b.WriteString("\n")
+		}
+	}
+	fmt.Fprintf(&b, "Lead: %s\n", pod.Lead)
+	b.WriteString("Conventions: use @name to address a member when they clearly own the request; otherwise answer directly.\n")
+
+	b.WriteString("\n---- THREAD ----\n")
+	if len(events) == 0 {
+		b.WriteString("(empty)\n")
+	} else {
+		for _, e := range events {
+			b.WriteString(renderEvent(e))
+		}
+	}
+
+	b.WriteString("\n---- YOUR TURN ----\n")
+	fmt.Fprintf(&b, "You are %s, the chief-of-staff. Write your next message in the thread. If a specific member clearly owns the request, @mention them; otherwise answer directly and completely.\n", cos.ResolvedName())
+	return b.String()
+}
+
 // RenderPrompt builds the single prompt sent to the Gemini CLI via
 // stdin. Unlike Claude, the Gemini CLI does not expose a separate
 // system-prompt flag, so we inline the role/pod context at the top
