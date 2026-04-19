@@ -25,9 +25,44 @@ func (m Model) View() string {
 
 	header := m.renderHeader()
 	body := m.viewport.View()
-	footer := m.renderFooter()
+	var footer string
+	if m.state == StatePrompting && m.wizard != nil {
+		footer = m.renderWizard()
+	} else {
+		footer = m.renderFooter()
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Top, header, body, footer)
+}
+
+// renderWizard replaces the footer pane when a wizard is active.
+func (m Model) renderWizard() string {
+	w := m.wizard
+	step := w.CurrentStep()
+	if step == nil {
+		return m.renderFooter()
+	}
+	cur, total := w.Progress()
+	var b strings.Builder
+	b.WriteString(metaStyle.Render(strings.Repeat("─", max(m.width, 20))))
+	b.WriteByte('\n')
+	b.WriteString(headerStyle.Render(fmt.Sprintf("%s · step %d/%d", w.Title, cur, total)))
+	b.WriteByte('\n')
+	b.WriteString(step.Question)
+	b.WriteByte('\n')
+	for i, c := range step.Choices {
+		b.WriteString(fmt.Sprintf("  %d. %s\n", i+1, c))
+	}
+	if len(step.Choices) > 0 && step.AllowCustom {
+		b.WriteString(metaStyle.Render("  (or type your own value)\n"))
+	}
+	if step.Optional {
+		b.WriteString(metaStyle.Render("  (optional — press Enter to skip)\n"))
+	}
+	b.WriteString(m.input.View())
+	b.WriteByte('\n')
+	b.WriteString(metaStyle.Render(m.statusLine + "   [Esc: cancel]"))
+	return b.String()
 }
 
 func (m Model) renderHeader() string {
@@ -50,6 +85,10 @@ func (m Model) renderFooter() string {
 	}
 	if m.lastErr != nil {
 		status = errStyle.Render(status)
+	}
+	pane := renderPermissionsPane(m.pendingRequests, m.width)
+	if pane != "" {
+		return pane + "\n" + divider + "\n" + m.input.View() + "\n" + metaStyle.Render(status)
 	}
 	return divider + "\n" + m.input.View() + "\n" + metaStyle.Render(status)
 }

@@ -18,6 +18,9 @@ const (
 	StateIdle State = iota
 	// StateRunning means a loop is streaming events into the Model.
 	StateRunning
+	// StatePrompting means a Wizard is active; input is captured by the
+	// wizard, not the chat loop.
+	StatePrompting
 	// StateQuit means the program has been asked to exit.
 	StateQuit
 )
@@ -37,6 +40,36 @@ type Options struct {
 	// InitialKickoff auto-submits this message on first Update tick.
 	// Set by `poddies run --tui --message "..."` callers.
 	InitialKickoff string
+
+	// OnApprove is called when the user approves a pending permission
+	// request. requestID is the ID of the permission_request event.
+	OnApprove func(requestID string) error
+	// OnDeny is called when the user denies a pending permission request.
+	OnDeny func(requestID, reason string) error
+	// GetPending returns the current list of unresolved permission_request
+	// events from the backing log. Called after a loop halts with
+	// LoopPendingPermission so the Model can populate its pane.
+	GetPending func() []thread.Event
+
+	// Slash-command callbacks. Nil means the corresponding command is
+	// unavailable and the TUI responds with an error in the status line.
+	OnAddMember    func(spec AddMemberSpec) error
+	OnRemoveMember func(name string) error
+	OnEditMember   func(name, field, value string) error
+	OnListMembers  func() []string
+	OnExportPod    func() ([]byte, error)
+}
+
+// AddMemberSpec bundles the answers from an addMemberWizard so the CLI
+// layer can call through to AddMember without the TUI package importing
+// cli/config-level types.
+type AddMemberSpec struct {
+	Name    string
+	Title   string
+	Adapter string
+	Model   string
+	Effort  string
+	Persona string
 }
 
 // Model is the bubbletea model for the poddies TUI.
@@ -66,6 +99,14 @@ type Model struct {
 	// layout
 	width, height int
 	ready         bool
+
+	// pendingRequests holds unresolved permission_request events.
+	// Populated when the loop halts with LoopPendingPermission.
+	pendingRequests []thread.Event
+
+	// wizard is active when state == StatePrompting. Input is routed to
+	// the wizard's Next() instead of the chat loop. Nil means no wizard.
+	wizard *Wizard
 }
 
 // NewModel constructs an initial Model. Callers typically hand it to
@@ -92,6 +133,14 @@ func NewModel(opts Options) Model {
 // tests that want to assert transcript state without introspecting
 // View output.
 func (m Model) Events() []thread.Event { return m.events }
+
+// PendingRequests returns the pending permission requests held by the
+// model. Exported for tests.
+func (m Model) PendingRequests() []thread.Event { return m.pendingRequests }
+
+// ActiveWizard returns the currently active wizard, or nil. Exported
+// for tests.
+func (m Model) ActiveWizard() *Wizard { return m.wizard }
 
 // CurrentState returns the coarse phase of the Model. For tests.
 func (m Model) CurrentState() State { return m.state }

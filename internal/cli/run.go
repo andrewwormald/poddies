@@ -154,12 +154,94 @@ func (a *App) runTUI(ctx context.Context, root, pod string, log *thread.Log, fir
 		return loop.Run(lctx)
 	}
 
+	// Pending-permission callbacks: wire approve/deny through the
+	// existing thread helpers so the TUI's keybindings mutate the log.
+	pending := func() []thread.Event {
+		events, err := log.Load()
+		if err != nil {
+			return nil
+		}
+		return thread.PendingPermissions(events)
+	}
+	approve := func(requestID string) error {
+		events, err := log.Load()
+		if err != nil {
+			return err
+		}
+		_, err = AppendGrant(log, events, requestID, "human")
+		return err
+	}
+	deny := func(requestID, reason string) error {
+		events, err := log.Load()
+		if err != nil {
+			return err
+		}
+		_, err = AppendDeny(log, events, requestID, "human", reason)
+		return err
+	}
+
+	// Slash-command callbacks: /add, /remove, /edit, /export, and the
+	// dynamic roster lookup. Each delegates to the existing CLI-level
+	// functions so business logic is centralized.
+	addMember := func(spec tui.AddMemberSpec) error {
+		return AddMember(root, pod, config.Member{
+			Name:    spec.Name,
+			Title:   spec.Title,
+			Adapter: config.Adapter(spec.Adapter),
+			Model:   spec.Model,
+			Effort:  config.Effort(spec.Effort),
+			Persona: spec.Persona,
+		})
+	}
+	removeMember := func(name string) error {
+		return RemoveMember(root, pod, name)
+	}
+	editMember := func(name, field, value string) error {
+		patch := MemberPatch{}
+		switch field {
+		case "title":
+			patch.Title = &value
+		case "adapter":
+			v := config.Adapter(value)
+			patch.Adapter = &v
+		case "model":
+			patch.Model = &value
+		case "effort":
+			v := config.Effort(value)
+			patch.Effort = &v
+		case "persona":
+			patch.Persona = &value
+		default:
+			return fmt.Errorf("unknown field %q", field)
+		}
+		_, err := EditMember(root, pod, name, patch)
+		return err
+	}
+	listMembers := func() []string {
+		names, _, err := listMemberNames(PodDir(root, pod))
+		if err != nil {
+			return nil
+		}
+		return names
+	}
+	exportPod := func() ([]byte, error) {
+		return ExportPod(root, pod, "")
+	}
+
 	return tui.Run(ctx, tui.Options{
 		PodName:        podCfg.Name,
 		Members:        memberNames,
 		Lead:           podCfg.Lead,
 		StartLoop:      start,
 		InitialKickoff: initialMessage,
+		GetPending:     pending,
+		OnApprove:      approve,
+		OnDeny:         deny,
+		OnAddMember:    addMember,
+		OnRemoveMember: removeMember,
+		OnEditMember:   editMember,
+		OnListMembers:  listMembers,
+		OnExportPod:    exportPod,
 	}, a.In, a.Out)
 }
 

@@ -12,6 +12,77 @@ import (
 	"github.com/andrewwormald/poddies/internal/config"
 )
 
+// ExportPod loads the pod at <root>/pods/<name> into a Bundle and writes TOML
+// to the given path. If outPath is empty the encoded bundle is returned as a
+// byte slice without touching the filesystem.
+func ExportPod(root, name, outPath string) ([]byte, error) {
+	if !PodExists(root, name) {
+		return nil, fmt.Errorf("%w: %q", ErrPodNotFound, name)
+	}
+	b, err := config.NewBundleFromPodDir(PodDir(root, name))
+	if err != nil {
+		return nil, fmt.Errorf("build bundle: %w", err)
+	}
+	if outPath == "" {
+		var buf []byte
+		w := &byteWriter{b: &buf}
+		if err := config.SaveBundle(w, b); err != nil {
+			return nil, err
+		}
+		return buf, nil
+	}
+	f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open %q: %w", outPath, err)
+	}
+	defer f.Close()
+	if err := config.SaveBundle(f, b); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// byteWriter is a minimal io.Writer that appends into a []byte slice.
+type byteWriter struct{ b *[]byte }
+
+func (w *byteWriter) Write(p []byte) (int, error) {
+	*w.b = append(*w.b, p...)
+	return len(p), nil
+}
+
+// ImportPod reads a bundle from bundlePath, optionally renames it with asName,
+// and writes the pod to <root>/pods/<name>. overwrite controls whether an
+// existing pod dir is replaced.
+func ImportPod(root, bundlePath, asName string, overwrite bool) (*config.Bundle, error) {
+	f, err := os.Open(bundlePath)
+	if err != nil {
+		return nil, fmt.Errorf("open bundle %q: %w", bundlePath, err)
+	}
+	defer f.Close()
+
+	b, err := config.LoadBundle(f)
+	if err != nil {
+		return nil, err
+	}
+
+	if asName != "" {
+		if err := config.ValidateSlug(asName); err != nil {
+			return nil, fmt.Errorf("--as name: %w", err)
+		}
+		b.Pod.Name = asName
+	}
+
+	if err := b.Validate(); err != nil {
+		return nil, fmt.Errorf("validate bundle: %w", err)
+	}
+
+	podDir := PodDir(root, b.Pod.Name)
+	if err := config.WriteBundleToPodDir(podDir, b, overwrite); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
 // CreatePod creates <root>/pods/<name>/ and writes a minimal pod.toml.
 // The root must exist (run `poddies init` first). Errors if a pod with
 // that name already exists or if name is not a valid slug.
@@ -98,7 +169,7 @@ func (a *App) newPodCmd() *cobra.Command {
 		Use:   "pod",
 		Short: "Manage pods.",
 	}
-	cmd.AddCommand(a.newPodCreateCmd(), a.newPodListCmd())
+	cmd.AddCommand(a.newPodCreateCmd(), a.newPodListCmd(), a.newPodExportCmd(), a.newPodImportCmd())
 	return cmd
 }
 
@@ -146,4 +217,56 @@ func (a *App) newPodListCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func (a *App) newPodExportCmd() *cobra.Command {
+	var outPath string
+	cmd := &cobra.Command{
+		Use:   "export <name>",
+		Short: "Export a pod as a portable TOML bundle.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root, err := a.rootFromApp()
+			if err != nil {
+				return err
+			}
+			data, err := ExportPod(root, args[0], outPath)
+			if err != nil {
+				return err
+			}
+			if outPath == "" {
+				_, err = a.Out.Write(data)
+				return err
+			}
+			fmt.Fprintf(a.Out, "exported pod %q to %s\n", args[0], outPath)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&outPath, "out", "", "write bundle to file instead of stdout")
+	return cmd
+}
+
+func (a *App) newPodImportCmd() *cobra.Command {
+	var asName string
+	var overwrite bool
+	cmd := &cobra.Command{
+		Use:   "import <file>",
+		Short: "Import a pod bundle, creating the pod under the resolved root.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root, err := a.rootFromApp()
+			if err != nil {
+				return err
+			}
+			b, err := ImportPod(root, args[0], asName, overwrite)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(a.Out, "imported pod %q to %s\n", b.Pod.Name, PodDir(root, b.Pod.Name))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&asName, "as", "", "rename the pod on import")
+	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing pod of the same name")
+	return cmd
 }

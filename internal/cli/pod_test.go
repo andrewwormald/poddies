@@ -202,3 +202,336 @@ func TestPodCmd_NoRoot_Errors(t *testing.T) {
 		// Accept wrapped forms — just check error is non-nil and cobra surfaced it.
 	}
 }
+
+// helpers for export/import tests
+
+// makeFullPod creates a pod with one member and returns (cwd, root).
+func makeFullPod(t *testing.T) (cwd, root string) {
+	t.Helper()
+	cwd, root = initLocalRoot(t)
+	if _, err := CreatePod(root, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	m := config.Member{
+		Name:    "alice",
+		Title:   "Staff Engineer",
+		Adapter: config.AdapterMock,
+		Model:   "mock-model",
+		Effort:  config.EffortHigh,
+	}
+	if err := config.SaveMember(PodDir(root, "demo"), &m); err != nil {
+		t.Fatal(err)
+	}
+	return cwd, root
+}
+
+// writeBundleFile writes a bundle to a temp file and returns its path.
+func writeBundleFile(t *testing.T, b *config.Bundle) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "bundle-*.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := config.SaveBundle(f, b); err != nil {
+		t.Fatal(err)
+	}
+	return f.Name()
+}
+
+// mustExportBundle exports a pod bundle or fatals.
+func mustExportBundle(t *testing.T, root, name string) *config.Bundle {
+	t.Helper()
+	data, err := ExportPod(root, name, "")
+	if err != nil {
+		t.Fatalf("ExportPod: %v", err)
+	}
+	b, err := config.LoadBundle(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	return b
+}
+
+// --- ExportPod ---
+
+func TestExportPod_ToStdout(t *testing.T) {
+	_, root := makeFullPod(t)
+	data, err := ExportPod(root, "demo", "")
+	if err != nil {
+		t.Fatalf("ExportPod: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("want non-empty bundle bytes")
+	}
+	b, err := config.LoadBundle(strings.NewReader(string(data)))
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
+	}
+	if b.Pod.Name != "demo" {
+		t.Errorf("want pod name demo, got %q", b.Pod.Name)
+	}
+}
+
+func TestExportPod_ToFile(t *testing.T) {
+	_, root := makeFullPod(t)
+	outPath := filepath.Join(t.TempDir(), "demo.toml")
+	data, err := ExportPod(root, "demo", outPath)
+	if err != nil {
+		t.Fatalf("ExportPod: %v", err)
+	}
+	if data != nil {
+		t.Error("want nil data when writing to file")
+	}
+	if _, err := os.Stat(outPath); err != nil {
+		t.Errorf("output file missing: %v", err)
+	}
+}
+
+func TestExportPod_NotFound_Errors(t *testing.T) {
+	_, root := initLocalRoot(t)
+	_, err := ExportPod(root, "nope", "")
+	if err == nil {
+		t.Error("want error for missing pod")
+	}
+}
+
+// --- ImportPod ---
+
+func TestImportPod_Creates(t *testing.T) {
+	_, root := makeFullPod(t)
+	data, err := ExportPod(root, "demo", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleFile := filepath.Join(t.TempDir(), "demo.toml")
+	if err := os.WriteFile(bundleFile, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, root2 := initLocalRoot(t)
+	b, err := ImportPod(root2, bundleFile, "", false)
+	if err != nil {
+		t.Fatalf("ImportPod: %v", err)
+	}
+	if b.Pod.Name != "demo" {
+		t.Errorf("want pod name demo, got %q", b.Pod.Name)
+	}
+	if !PodExists(root2, "demo") {
+		t.Error("pod missing after import")
+	}
+}
+
+func TestImportPod_AsRename(t *testing.T) {
+	_, root := makeFullPod(t)
+	bundlePath := writeBundleFile(t, mustExportBundle(t, root, "demo"))
+
+	_, root2 := initLocalRoot(t)
+	b, err := ImportPod(root2, bundlePath, "renamed", false)
+	if err != nil {
+		t.Fatalf("ImportPod --as: %v", err)
+	}
+	if b.Pod.Name != "renamed" {
+		t.Errorf("want pod name renamed, got %q", b.Pod.Name)
+	}
+	if !PodExists(root2, "renamed") {
+		t.Error("renamed pod missing after import")
+	}
+}
+
+func TestImportPod_DuplicateNoOverwrite_Errors(t *testing.T) {
+	_, root := makeFullPod(t)
+	bundlePath := writeBundleFile(t, mustExportBundle(t, root, "demo"))
+
+	_, root2 := initLocalRoot(t)
+	if _, err := ImportPod(root2, bundlePath, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportPod(root2, bundlePath, "", false); err == nil {
+		t.Error("want error on duplicate import without --overwrite")
+	}
+}
+
+func TestImportPod_DuplicateWithOverwrite_Succeeds(t *testing.T) {
+	_, root := makeFullPod(t)
+	bundlePath := writeBundleFile(t, mustExportBundle(t, root, "demo"))
+
+	_, root2 := initLocalRoot(t)
+	if _, err := ImportPod(root2, bundlePath, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportPod(root2, bundlePath, "", true); err != nil {
+		t.Errorf("want success with --overwrite, got %v", err)
+	}
+}
+
+func TestImportPod_BadBundleFile_Errors(t *testing.T) {
+	_, root2 := initLocalRoot(t)
+	_, err := ImportPod(root2, filepath.Join(t.TempDir(), "nope.toml"), "", false)
+	if err == nil {
+		t.Error("want error for missing bundle file")
+	}
+}
+
+func TestImportPod_SchemaVersionMismatch_Errors(t *testing.T) {
+	_, root := makeFullPod(t)
+	b := mustExportBundle(t, root, "demo")
+	b.SchemaVersion = 99
+	bundlePath := writeBundleFile(t, b)
+
+	_, root2 := initLocalRoot(t)
+	_, err := ImportPod(root2, bundlePath, "", false)
+	if err == nil {
+		t.Error("want error for schema_version mismatch")
+	}
+}
+
+// --- Cobra commands ---
+
+func TestPodExportCmd_Stdout(t *testing.T) {
+	cwd, _ := makeFullPod(t)
+	a, out, _ := newTestApp(cwd, t.TempDir())
+	if err := runCmd(t, a, "pod", "export", "demo"); err != nil {
+		t.Fatalf("export cmd: %v", err)
+	}
+	if !strings.Contains(out.String(), "schema_version") {
+		t.Errorf("want TOML bundle in stdout, got %q", out.String())
+	}
+}
+
+func TestPodExportCmd_OutFile(t *testing.T) {
+	cwd, _ := makeFullPod(t)
+	outPath := filepath.Join(t.TempDir(), "bundle.toml")
+	a, out, _ := newTestApp(cwd, t.TempDir())
+	if err := runCmd(t, a, "pod", "export", "demo", "--out", outPath); err != nil {
+		t.Fatalf("export cmd: %v", err)
+	}
+	if !strings.Contains(out.String(), "exported pod") {
+		t.Errorf("want 'exported pod' in output, got %q", out.String())
+	}
+	if _, err := os.Stat(outPath); err != nil {
+		t.Errorf("output file missing: %v", err)
+	}
+}
+
+func TestPodExportCmd_NotFound_Errors(t *testing.T) {
+	cwd, _ := initLocalRoot(t)
+	a, _, _ := newTestApp(cwd, t.TempDir())
+	if err := runCmd(t, a, "pod", "export", "nope"); err == nil {
+		t.Error("want error for missing pod")
+	}
+}
+
+func TestPodImportCmd_Creates(t *testing.T) {
+	srcCwd, _ := makeFullPod(t)
+	outPath := filepath.Join(t.TempDir(), "demo.toml")
+	{
+		a, _, _ := newTestApp(srcCwd, t.TempDir())
+		if err := runCmd(t, a, "pod", "export", "demo", "--out", outPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dstCwd, dstRoot := initLocalRoot(t)
+	a, out, _ := newTestApp(dstCwd, t.TempDir())
+	if err := runCmd(t, a, "pod", "import", outPath); err != nil {
+		t.Fatalf("import cmd: %v", err)
+	}
+	if !strings.Contains(out.String(), "imported pod") {
+		t.Errorf("want 'imported pod' in output, got %q", out.String())
+	}
+	if !PodExists(dstRoot, "demo") {
+		t.Error("pod missing after import")
+	}
+}
+
+func TestPodImportCmd_AsFlag(t *testing.T) {
+	srcCwd, _ := makeFullPod(t)
+	outPath := filepath.Join(t.TempDir(), "demo.toml")
+	{
+		a, _, _ := newTestApp(srcCwd, t.TempDir())
+		if err := runCmd(t, a, "pod", "export", "demo", "--out", outPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dstCwd, dstRoot := initLocalRoot(t)
+	a, _, _ := newTestApp(dstCwd, t.TempDir())
+	if err := runCmd(t, a, "pod", "import", outPath, "--as", "other"); err != nil {
+		t.Fatalf("import --as: %v", err)
+	}
+	if !PodExists(dstRoot, "other") {
+		t.Error("renamed pod missing after import --as")
+	}
+}
+
+func TestPodImportCmd_OverwriteFlag(t *testing.T) {
+	srcCwd, _ := makeFullPod(t)
+	outPath := filepath.Join(t.TempDir(), "demo.toml")
+	{
+		a, _, _ := newTestApp(srcCwd, t.TempDir())
+		if err := runCmd(t, a, "pod", "export", "demo", "--out", outPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dstCwd, _ := initLocalRoot(t)
+	{
+		a, _, _ := newTestApp(dstCwd, t.TempDir())
+		if err := runCmd(t, a, "pod", "import", outPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+	{
+		a, _, _ := newTestApp(dstCwd, t.TempDir())
+		if err := runCmd(t, a, "pod", "import", outPath); err == nil {
+			t.Error("want error on duplicate without --overwrite")
+		}
+	}
+	{
+		a, _, _ := newTestApp(dstCwd, t.TempDir())
+		if err := runCmd(t, a, "pod", "import", outPath, "--overwrite"); err != nil {
+			t.Errorf("want success with --overwrite, got %v", err)
+		}
+	}
+}
+
+// Export + Import round-trip: re-exported bytes equal original.
+func TestPodExportImport_RoundTrip_ByteIdentical(t *testing.T) {
+	srcCwd, _ := makeFullPod(t)
+	outPath := filepath.Join(t.TempDir(), "demo.toml")
+	{
+		a, _, _ := newTestApp(srcCwd, t.TempDir())
+		if err := runCmd(t, a, "pod", "export", "demo", "--out", outPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dstCwd, _ := initLocalRoot(t)
+	{
+		a, _, _ := newTestApp(dstCwd, t.TempDir())
+		if err := runCmd(t, a, "pod", "import", outPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	outPath2 := filepath.Join(t.TempDir(), "demo2.toml")
+	{
+		a, _, _ := newTestApp(dstCwd, t.TempDir())
+		if err := runCmd(t, a, "pod", "export", "demo", "--out", outPath2); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	orig, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reexported, err := os.ReadFile(outPath2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(orig) != string(reexported) {
+		t.Errorf("export->import->export not byte-identical\n--- original ---\n%s\n--- re-exported ---\n%s", orig, reexported)
+	}
+}

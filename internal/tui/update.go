@@ -6,20 +6,43 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/andrewwormald/poddies/internal/orchestrator"
 	"github.com/andrewwormald/poddies/internal/thread"
 )
 
-// Init implements tea.Model. It arms the initial subscription Cmd and,
-// if an InitialKickoff was configured, auto-submits it.
+// Init implements tea.Model. It arms the initial subscription Cmd.
+// When the pod has no members yet, Init queues an onboarding-trigger
+// message that opens the addMemberWizard on first tick. Otherwise, if
+// an InitialKickoff was configured, it auto-submits that instead.
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{waitForSubMsg(m.sub)}
-	if m.opts.InitialKickoff != "" {
+	if m.needsOnboarding() {
+		cmds = append(cmds, func() tea.Msg { return startOnboardingMsg{} })
+	} else if m.opts.InitialKickoff != "" {
 		cmds = append(cmds, func() tea.Msg {
 			return autoSubmitMsg{text: m.opts.InitialKickoff}
 		})
 	}
 	return tea.Batch(cmds...)
 }
+
+// needsOnboarding reports whether the TUI should open an addMember
+// wizard on first tick — true when the pod has no members yet.
+func (m Model) needsOnboarding() bool {
+	if m.opts.OnAddMember == nil {
+		// we can't add members via the TUI in this session, so there's
+		// nothing useful onboarding can do. Skip.
+		return false
+	}
+	if m.opts.OnListMembers != nil {
+		return len(m.opts.OnListMembers()) == 0
+	}
+	return len(m.opts.Members) == 0
+}
+
+// startOnboardingMsg is an internal signal handled by Update to kick
+// off the onboarding wizard on the first tick.
+type startOnboardingMsg struct{}
 
 // autoSubmitMsg is an internal signal used by Init to trigger a
 // first-tick kickoff without the user having to press Enter. Exported
@@ -50,6 +73,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onKey(msg)
 	case autoSubmitMsg:
 		return m.submit(msg.text)
+	case startOnboardingMsg:
+		m.statusLine = "welcome — let's add your first member"
+		m = m.activateWizard(onboardingAddMemberWizard(m.opts))
+		return m, waitForSubMsg(m.sub)
 	case EventMsg:
 		return m.onEvent(msg)
 	case LoopDoneMsg:
@@ -92,7 +119,17 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.state = StateQuit
 		return m, tea.Quit
+	case tea.KeyEsc:
+		if m.state == StatePrompting {
+			m = m.cancelWizard()
+			return m, waitForSubMsg(m.sub)
+		}
 	case tea.KeyEnter:
+		if m.state == StatePrompting {
+			text := m.input.Value()
+			m.input.SetValue("")
+			return m.wizardSubmit(text)
+		}
 		if m.state == StateIdle {
 			text := m.input.Value()
 			if text == "" {
@@ -103,7 +140,23 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.state == StateIdle {
+	if m.state == StateIdle && len(m.pendingRequests) > 0 {
+		switch msg.Type {
+		case tea.KeyRunes:
+			switch string(msg.Runes) {
+			case "a":
+				return m.onApprove()
+			case "d":
+				return m.onDeny()
+			case "A":
+				return m.onApproveAll()
+			case "D":
+				return m.onDenyAll()
+			}
+		}
+	}
+
+	if m.state == StateIdle || m.state == StatePrompting {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
@@ -116,8 +169,12 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // submit appends a human event to the local view (the real event
 // lands in the log via the loop's HumanMessage kickoff) and launches
-// the loop in a goroutine.
+// the loop in a goroutine. If the input starts with "/", it is routed
+// to the slash-command dispatcher instead.
 func (m Model) submit(text string) (tea.Model, tea.Cmd) {
+	if len(text) > 0 && text[0] == '/' {
+		return m.dispatchSlashCommand(text)
+	}
 	if m.opts.StartLoop == nil {
 		m.lastErr = fmt.Errorf("start-loop not configured")
 		m.statusLine = "error: start-loop not configured"
@@ -150,6 +207,7 @@ func (m Model) onEvent(msg EventMsg) (tea.Model, tea.Cmd) {
 }
 
 // onLoopDone transitions back to Idle and summarizes the run.
+// When the loop stopped for pending permissions, populates pendingRequests.
 func (m Model) onLoopDone(msg LoopDoneMsg) (tea.Model, tea.Cmd) {
 	m.state = StateIdle
 	m.cancelLoop = nil
@@ -160,6 +218,82 @@ func (m Model) onLoopDone(msg LoopDoneMsg) (tea.Model, tea.Cmd) {
 		m.lastStop = msg.Result.StopReason
 		m.turnsRun = msg.Result.TurnsRun
 		m.statusLine = fmt.Sprintf("stopped: %s (turns=%d)", msg.Result.StopReason, msg.Result.TurnsRun)
+		if msg.Result.StopReason == orchestrator.LoopPendingPermission && m.opts.GetPending != nil {
+			m.pendingRequests = m.opts.GetPending()
+		}
 	}
 	return m, waitForSubMsg(m.sub)
+}
+
+// onApprove approves the oldest pending request.
+func (m Model) onApprove() (tea.Model, tea.Cmd) {
+	if len(m.pendingRequests) == 0 || m.opts.OnApprove == nil {
+		return m, waitForSubMsg(m.sub)
+	}
+	req := m.pendingRequests[0]
+	m.pendingRequests = m.pendingRequests[1:]
+	if err := m.opts.OnApprove(req.ID); err != nil {
+		m.lastErr = err
+		m.statusLine = "error: " + err.Error()
+		return m, waitForSubMsg(m.sub)
+	}
+	return m.maybeResume()
+}
+
+// onDeny denies the oldest pending request.
+func (m Model) onDeny() (tea.Model, tea.Cmd) {
+	if len(m.pendingRequests) == 0 || m.opts.OnDeny == nil {
+		return m, waitForSubMsg(m.sub)
+	}
+	req := m.pendingRequests[0]
+	m.pendingRequests = m.pendingRequests[1:]
+	if err := m.opts.OnDeny(req.ID, ""); err != nil {
+		m.lastErr = err
+		m.statusLine = "error: " + err.Error()
+		return m, waitForSubMsg(m.sub)
+	}
+	return m.maybeResume()
+}
+
+// onApproveAll approves all pending requests.
+func (m Model) onApproveAll() (tea.Model, tea.Cmd) {
+	if len(m.pendingRequests) == 0 || m.opts.OnApprove == nil {
+		return m, waitForSubMsg(m.sub)
+	}
+	for _, req := range m.pendingRequests {
+		if err := m.opts.OnApprove(req.ID); err != nil {
+			m.lastErr = err
+			m.statusLine = "error: " + err.Error()
+			m.pendingRequests = nil
+			return m, waitForSubMsg(m.sub)
+		}
+	}
+	m.pendingRequests = nil
+	return m.maybeResume()
+}
+
+// onDenyAll denies all pending requests.
+func (m Model) onDenyAll() (tea.Model, tea.Cmd) {
+	if len(m.pendingRequests) == 0 || m.opts.OnDeny == nil {
+		return m, waitForSubMsg(m.sub)
+	}
+	for _, req := range m.pendingRequests {
+		if err := m.opts.OnDeny(req.ID, ""); err != nil {
+			m.lastErr = err
+			m.statusLine = "error: " + err.Error()
+			m.pendingRequests = nil
+			return m, waitForSubMsg(m.sub)
+		}
+	}
+	m.pendingRequests = nil
+	return m.maybeResume()
+}
+
+// maybeResume re-kicks the loop with an empty message when all pending
+// requests have been handled, so agents can continue automatically.
+func (m Model) maybeResume() (tea.Model, tea.Cmd) {
+	if len(m.pendingRequests) > 0 {
+		return m, waitForSubMsg(m.sub)
+	}
+	return m.submit("")
 }
