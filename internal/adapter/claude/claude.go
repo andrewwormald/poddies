@@ -5,9 +5,11 @@
 package claude
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/andrewwormald/poddies/internal/adapter"
 	"github.com/andrewwormald/poddies/internal/adapter/cliproc"
@@ -21,9 +23,15 @@ const DefaultBinary = "claude"
 
 // Adapter is the Claude Code CLI adapter.
 type Adapter struct {
-	Binary string          // overrideable for tests or sidecar installs
-	Runner cliproc.Runner  // defaults to cliproc.NewExecRunner()
-	Roster RosterFn
+	Binary          string                // overrideable for tests or sidecar installs
+	Runner          cliproc.Runner        // defaults to cliproc.NewExecRunner()
+	StreamingRunner cliproc.StreamingRunner // used when OnToken is set; defaults to cliproc.NewExecRunner()
+	Roster          RosterFn
+	// OnToken, when non-nil, switches the adapter to streaming mode. Each
+	// partial text delta from the assistant is passed to OnToken as it
+	// arrives. The final InvokeResponse.Body equals the concatenation of
+	// all deltas.
+	OnToken func(delta string)
 }
 
 // RosterFn returns the full member list for a pod. The adapter calls
@@ -34,10 +42,12 @@ type RosterFn func(pod config.Pod) ([]config.Member, error)
 
 // New constructs an Adapter with production defaults.
 func New() *Adapter {
+	exec := cliproc.NewExecRunner()
 	return &Adapter{
-		Binary: DefaultBinary,
-		Runner: cliproc.NewExecRunner(),
-		Roster: func(config.Pod) ([]config.Member, error) { return nil, nil },
+		Binary:          DefaultBinary,
+		Runner:          exec,
+		StreamingRunner: exec,
+		Roster:          func(config.Pod) ([]config.Member, error) { return nil, nil },
 	}
 }
 
@@ -47,18 +57,34 @@ func (a *Adapter) Name() string { return string(config.AdapterClaude) }
 // ClaudeResult mirrors the JSON object emitted by
 // `claude -p ... --output-format json`.
 type ClaudeResult struct {
-	Type      string `json:"type"`
-	Subtype   string `json:"subtype"`
-	Result    string `json:"result"`
-	SessionID string `json:"session_id"`
-	IsError   bool   `json:"is_error"`
-	NumTurns  int    `json:"num_turns"`
+	Type       string `json:"type"`
+	Subtype    string `json:"subtype"`
+	Result     string `json:"result"`
+	SessionID  string `json:"session_id"`
+	IsError    bool   `json:"is_error"`
+	NumTurns   int    `json:"num_turns"`
 	DurationMs int    `json:"duration_ms"`
+}
+
+// streamMessage is one line of JSONL from --output-format stream-json.
+type streamMessage struct {
+	Type    string `json:"type"`
+	Subtype string `json:"subtype"`
+	// For type=="assistant" messages, content holds text deltas.
+	Content []streamContent `json:"content"`
+	// For type=="result" messages.
+	Result  string `json:"result"`
+	IsError bool   `json:"is_error"`
+}
+
+type streamContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 // Invoke implements adapter.Adapter. It renders the thread into a
 // claude-flavored prompt, runs one shot, parses the JSON result, and
-// returns the text.
+// returns the text. When OnToken is set it switches to streaming mode.
 func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapter.InvokeResponse, error) {
 	if err := adapter.ValidateRequest(req); err != nil {
 		return adapter.InvokeResponse{}, err
@@ -79,6 +105,10 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 
 	systemPrompt := RenderSystemPrompt(req.Member, req.Pod, roster)
 	userPrompt := RenderUserPrompt(req.Member, req.Thread)
+
+	if a.OnToken != nil {
+		return a.invokeStreaming(ctx, model, systemPrompt, userPrompt)
+	}
 
 	args := BuildArgs(model, systemPrompt)
 
@@ -102,6 +132,78 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 	}, nil
 }
 
+// invokeStreaming runs the claude CLI with --output-format stream-json,
+// reads JSONL lines as they arrive, calls OnToken for each text delta,
+// and returns when the result message is received.
+func (a *Adapter) invokeStreaming(ctx context.Context, model, systemPrompt, userPrompt string) (adapter.InvokeResponse, error) {
+	if a.StreamingRunner == nil {
+		return adapter.InvokeResponse{}, fmt.Errorf("claude: streaming runner not configured")
+	}
+	args := BuildStreamArgs(model, systemPrompt)
+	stdout, wait, err := a.StreamingRunner.Start(ctx, a.Binary, args, []byte(userPrompt))
+	if err != nil {
+		return adapter.InvokeResponse{}, fmt.Errorf("claude: stream start: %w", err)
+	}
+
+	var body strings.Builder
+	scanner := bufio.NewScanner(stdout)
+	var parseErr error
+	var resultMsg *streamMessage
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var msg streamMessage
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			// skip malformed lines; record first error
+			if parseErr == nil {
+				parseErr = fmt.Errorf("claude: malformed stream line: %w (line: %s)", err, cliproc.Truncate([]byte(line), 256))
+			}
+			continue
+		}
+		switch msg.Type {
+		case "assistant":
+			for _, c := range msg.Content {
+				if c.Type == "text" && c.Text != "" {
+					a.OnToken(c.Text)
+					body.WriteString(c.Text)
+				}
+			}
+		case "result":
+			resultMsg = &msg
+		}
+	}
+	if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		return adapter.InvokeResponse{}, fmt.Errorf("claude: stream read: %w", err)
+	}
+
+	stderr, waitErr := wait()
+	if waitErr != nil && ctx.Err() == nil {
+		return adapter.InvokeResponse{}, fmt.Errorf("claude: stream wait: %w (stderr: %s)", waitErr, cliproc.Truncate(stderr, 512))
+	}
+	if ctx.Err() != nil {
+		return adapter.InvokeResponse{}, ctx.Err()
+	}
+	if parseErr != nil {
+		return adapter.InvokeResponse{}, parseErr
+	}
+	if resultMsg != nil && resultMsg.IsError {
+		return adapter.InvokeResponse{}, fmt.Errorf("claude: returned error (%s): %s", resultMsg.Subtype, resultMsg.Result)
+	}
+
+	text := body.String()
+	// If no assistant deltas arrived but the result message has content, fall back to it.
+	if text == "" && resultMsg != nil {
+		text = resultMsg.Result
+	}
+	return adapter.InvokeResponse{
+		Body:       text,
+		Mentions:   thread.ParseMentions(text),
+		StopReason: adapter.StopDone,
+	}, nil
+}
+
 // BuildArgs assembles the argv passed to `claude`. Exported so tests
 // can assert the exact flag list without running anything.
 //
@@ -112,6 +214,20 @@ func BuildArgs(model, systemPrompt string) []string {
 	args := []string{
 		"-p", "-", // read user prompt from stdin
 		"--output-format", "json",
+		"--model", model,
+	}
+	if systemPrompt != "" {
+		args = append(args, "--append-system-prompt", systemPrompt)
+	}
+	return args
+}
+
+// BuildStreamArgs assembles argv for streaming mode (--output-format stream-json).
+// Exported so tests can assert the exact flag list.
+func BuildStreamArgs(model, systemPrompt string) []string {
+	args := []string{
+		"-p", "-",
+		"--output-format", "stream-json",
 		"--model", model,
 	}
 	if systemPrompt != "" {
