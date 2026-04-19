@@ -8,3 +8,11 @@ coverage.*
 .idea/
 .vscode/
 .claude/worktrees/
+
+# Pod runtime state created by running `poddies` in-tree. Never
+# committed — each user's pods, members, threads, and session IDs are
+# local.
+/pods/
+/threads/
+/.state.toml
+
