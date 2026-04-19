@@ -57,13 +57,23 @@ func (a *Adapter) Name() string { return string(config.AdapterClaude) }
 // ClaudeResult mirrors the JSON object emitted by
 // `claude -p ... --output-format json`.
 type ClaudeResult struct {
-	Type       string `json:"type"`
-	Subtype    string `json:"subtype"`
-	Result     string `json:"result"`
-	SessionID  string `json:"session_id"`
-	IsError    bool   `json:"is_error"`
-	NumTurns   int    `json:"num_turns"`
-	DurationMs int    `json:"duration_ms"`
+	Type         string       `json:"type"`
+	Subtype      string       `json:"subtype"`
+	Result       string       `json:"result"`
+	SessionID    string       `json:"session_id"`
+	IsError      bool         `json:"is_error"`
+	NumTurns     int          `json:"num_turns"`
+	DurationMs   int          `json:"duration_ms"`
+	TotalCostUSD float64      `json:"total_cost_usd"`
+	Usage        ClaudeUsage  `json:"usage"`
+}
+
+// ClaudeUsage is the per-turn token + cache accounting in the result JSON.
+type ClaudeUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 }
 
 // streamMessage is one line of JSONL from --output-format stream-json.
@@ -121,6 +131,9 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 	}
 
 	args := BuildArgs(model, systemPrompt)
+	if req.PriorSessionID != "" {
+		args = append(args, "--resume", req.PriorSessionID)
+	}
 
 	stdout, stderr, err := a.Runner.Run(ctx, a.Binary, args, []byte(userPrompt))
 	if err != nil {
@@ -143,6 +156,13 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 		Body:       res.Result,
 		Mentions:   thread.ParseMentions(res.Result),
 		StopReason: adapter.StopDone,
+		SessionID:  res.SessionID,
+		Usage: adapter.Usage{
+			InputTokens:  res.Usage.InputTokens + res.Usage.CacheCreationInputTokens + res.Usage.CacheReadInputTokens,
+			OutputTokens: res.Usage.OutputTokens,
+			TotalCostUSD: res.TotalCostUSD,
+			DurationMs:   res.DurationMs,
+		},
 	}, nil
 }
 

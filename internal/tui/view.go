@@ -76,11 +76,32 @@ func (m Model) renderFooter() string {
 	if m.lastErr != nil {
 		status = errStyle.Render(status)
 	}
+	if usage := m.renderUsage(); usage != "" {
+		status = status + "  " + usage
+	}
 	pane := renderPermissionsPane(m.pendingRequests, m.width)
 	if pane != "" {
 		return pane + "\n" + divider + "\n" + m.input.View() + "\n" + metaStyle.Render(status)
 	}
 	return divider + "\n" + m.input.View() + "\n" + metaStyle.Render(status)
+}
+
+// renderUsage formats the cumulative token counter for the footer.
+// Empty when the callback isn't wired or the counter is still zero —
+// avoids drawing "0 tokens" before anything has happened.
+func (m Model) renderUsage() string {
+	if m.opts.OnUsageSnapshot == nil {
+		return ""
+	}
+	s := m.opts.OnUsageSnapshot()
+	if s.TurnCount == 0 {
+		return ""
+	}
+	txt := fmt.Sprintf("%d turns · %d tokens (in %d / out %d)", s.TurnCount, s.TotalTokens(), s.InputTokens, s.OutputTokens)
+	if s.CostUSD > 0 {
+		txt += fmt.Sprintf(" · $%.4f", s.CostUSD)
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(txt)
 }
 
 // renderTranscript formats the event list into the viewport-ready text.

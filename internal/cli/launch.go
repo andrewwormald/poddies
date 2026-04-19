@@ -211,6 +211,18 @@ func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *t
 		return out
 	}
 	exportPod := func() ([]byte, error) { return ExportPod(root, pod, "") }
+	usageSnapshot := func() tui.UsageSnapshot {
+		m, err := thread.LoadMeta(log.Path)
+		if err != nil || m == nil {
+			return tui.UsageSnapshot{}
+		}
+		return tui.UsageSnapshot{
+			InputTokens:  m.InputTokens,
+			OutputTokens: m.OutputTokens,
+			CostUSD:      m.CostUSD,
+			TurnCount:    m.TurnCount,
+		}
+	}
 	runDoctor := func() []tui.DoctorCheck {
 		checks := RunDoctor(DoctorOpts{Cwd: a.Cwd, Home: a.Home, EnvRoot: a.EnvRoot})
 		out := make([]tui.DoctorCheck, 0, len(checks))
@@ -234,8 +246,9 @@ func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *t
 		OnListMembers:  listMembers,
 		OnListPods:     listPods,
 		OnListThreads:  listThreads,
-		OnExportPod:    exportPod,
-		OnDoctor:       runDoctor,
+		OnExportPod:     exportPod,
+		OnDoctor:        runDoctor,
+		OnUsageSnapshot: usageSnapshot,
 	}, a.In, a.Out)
 }
 

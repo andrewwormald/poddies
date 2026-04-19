@@ -93,18 +93,50 @@ type LoopResult struct {
 	TurnsRun int
 	// LastDecision is the final Route decision (useful for debugging).
 	LastDecision RoutingDecision
+	// Usage aggregates the adapter-reported token usage for this Run.
+	// Each adapter invocation's Usage is Add'd; zero when adapters
+	// don't report (e.g. gemini's plain-stdout path).
+	Usage adapter.Usage
+	// CumulativeMeta is a snapshot of the thread's meta sidecar after
+	// this Run's turns have been recorded. Lets callers show lifetime
+	// counters alongside the per-run numbers.
+	CumulativeMeta *thread.Meta
 }
 
 // Run executes the loop. On context cancellation or adapter error the
 // loop exits early; any events already appended are returned so callers
 // can render a partial thread to the user.
-func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
+func (l *Loop) Run(ctx context.Context) (result LoopResult, err error) {
 	if l.Log == nil {
 		return LoopResult{}, fmt.Errorf("orchestrator: Log must not be nil")
 	}
 	if l.AdapterLookup == nil {
 		return LoopResult{}, fmt.Errorf("orchestrator: AdapterLookup must not be nil")
 	}
+	// Declared here so the deferred return-annotator below can see them.
+	// Populated as the run progresses; captured at function exit into
+	// result.Usage / result.CumulativeMeta.
+	var (
+		runUsageFromOuter adapter.Usage
+		metaFromOuter     *thread.Meta
+	)
+	// Annotate every return with per-run usage and the cumulative meta
+	// snapshot so callers (CLI stdout, TUI footer) can show burn rate
+	// without re-reading the sidecar.
+	defer func() {
+		result.Usage = runUsageFromOuter
+		if metaFromOuter != nil {
+			// clone to avoid the TUI mutating our in-loop state
+			m := *metaFromOuter
+			if metaFromOuter.LastSessionIDs != nil {
+				m.LastSessionIDs = make(map[string]string, len(metaFromOuter.LastSessionIDs))
+				for k, v := range metaFromOuter.LastSessionIDs {
+					m.LastSessionIDs[k] = v
+				}
+			}
+			result.CumulativeMeta = &m
+		}
+	}()
 
 	podDir := filepath.Join(l.Root, "pods", l.Pod)
 	pod, err := config.LoadPod(podDir)
@@ -121,6 +153,23 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 	existing, err := l.Log.Load()
 	if err != nil {
 		return LoopResult{}, fmt.Errorf("load thread: %w", err)
+	}
+
+	// Load per-thread metadata (session IDs + cumulative usage). Missing
+	// is fine; LoadMeta returns an empty Meta. Any persist error after
+	// a successful turn is logged but non-fatal — we never want meta
+	// corruption to block the conversation.
+	meta, err := thread.LoadMeta(l.Log.Path)
+	if err != nil {
+		return LoopResult{}, fmt.Errorf("load thread meta: %w", err)
+	}
+	metaFromOuter = meta
+	var runUsage adapter.Usage
+	persistMeta := func() {
+		runUsageFromOuter = runUsage
+		if err := thread.SaveMeta(l.Log.Path, meta); err != nil && l.OnEvent != nil {
+			l.OnEvent(thread.Event{Type: thread.EventSystem, Body: "warning: meta save failed: " + err.Error()})
+		}
 	}
 
 	var appended []thread.Event
@@ -198,7 +247,7 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 		// so a pod configured with both triggers doesn't fire the CoS
 		// twice (gray_area answer → halt → rescue → duplicate).
 		if shouldFireGrayArea(existing, pod.ChiefOfStaff) {
-			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit); err != nil {
+			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage); err != nil {
 				return LoopResult{
 						Events:       appended,
 						StopReason:   LoopError,
@@ -215,7 +264,7 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 		// Milestone trigger fires before routing, once we have at least
 		// one member turn under our belt.
 		if turnsRun > 0 && turnsSinceMilestone >= milestoneEvery && hasTrigger(pod.ChiefOfStaff, config.TriggerMilestone) {
-			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit); err != nil {
+			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage); err != nil {
 				return LoopResult{
 						Events:       appended,
 						StopReason:   LoopError,
@@ -251,7 +300,7 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 			// and we exit cleanly.
 			if !cosRescued && hasTrigger(pod.ChiefOfStaff, config.TriggerUnresolvedRouting) {
 				cosRescued = true
-				if err := l.invokeChiefOfStaff(ctx, pod, existing, emit); err != nil {
+				if err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage); err != nil {
 					return LoopResult{
 							Events:       appended,
 							StopReason:   LoopError,
@@ -281,7 +330,7 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 		// Consumes the rescue budget so a subsequent Route halt doesn't
 		// also fire unresolved_routing — the CoS has already had its say.
 		if pod.ChiefOfStaff.Enabled && decision.Member == pod.ChiefOfStaff.ResolvedName() {
-			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit); err != nil {
+			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage); err != nil {
 				return LoopResult{
 						Events:       appended,
 						StopReason:   LoopError,
@@ -323,11 +372,12 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 		}
 
 		resp, err := a.Invoke(ctx, adapter.InvokeRequest{
-			Role:   adapter.RoleMember,
-			Member: *member,
-			Pod:    *pod,
-			Thread: existing,
-			Effort: effort,
+			Role:           adapter.RoleMember,
+			Member:         *member,
+			Pod:            *pod,
+			Thread:         existing,
+			Effort:         effort,
+			PriorSessionID: meta.LastSessionIDs[member.Name],
 		})
 		if err != nil {
 			return LoopResult{
@@ -338,6 +388,9 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 				},
 				fmt.Errorf("invoke %s: %w", member.Name, err)
 		}
+		meta.RecordTurn(member.Name, resp.SessionID, resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.TotalCostUSD, resp.Usage.DurationMs)
+		runUsage = runUsage.Add(resp.Usage)
+		persistMeta()
 
 		if resp.Body != "" {
 			e, err := l.Log.Append(thread.Event{
@@ -450,22 +503,30 @@ func shouldFireGrayArea(events []thread.Event, cos config.ChiefOfStaff) bool {
 // invokeChiefOfStaff runs one CoS turn and appends the response as a
 // visible message event under the CoS's configured name. Wrapped so
 // both the milestone trigger path and the unresolved-routing rescue
-// path share identical semantics.
-func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events []thread.Event, emit func(thread.Event)) error {
+// path share identical semantics. Also records token usage + session
+// ID into the thread metadata passed in.
+func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events []thread.Event, emit func(thread.Event), meta *thread.Meta, runUsage *adapter.Usage) error {
 	cos := pod.ChiefOfStaff
 	a, err := l.AdapterLookup(string(cos.Adapter))
 	if err != nil {
 		return fmt.Errorf("resolve adapter %q: %w", cos.Adapter, err)
 	}
+	cosKey := cos.ResolvedName()
 	resp, err := a.Invoke(ctx, adapter.InvokeRequest{
-		Role:         adapter.RoleChiefOfStaff,
-		ChiefOfStaff: cos,
-		Pod:          *pod,
-		Thread:       events,
-		Effort:       config.EffortLow,
+		Role:           adapter.RoleChiefOfStaff,
+		ChiefOfStaff:   cos,
+		Pod:            *pod,
+		Thread:         events,
+		Effort:         config.EffortLow,
+		PriorSessionID: meta.LastSessionIDs[cosKey],
 	})
 	if err != nil {
 		return fmt.Errorf("invoke: %w", err)
+	}
+	meta.RecordTurn(cosKey, resp.SessionID, resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.TotalCostUSD, resp.Usage.DurationMs)
+	*runUsage = runUsage.Add(resp.Usage)
+	if saveErr := thread.SaveMeta(l.Log.Path, meta); saveErr != nil && l.OnEvent != nil {
+		l.OnEvent(thread.Event{Type: thread.EventSystem, Body: "warning: meta save failed: " + saveErr.Error()})
 	}
 	// Skip empty-body responses entirely. Appending an empty message
 	// event would poison the thread: Route's last-non-meta-event lookup

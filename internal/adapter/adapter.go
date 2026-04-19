@@ -47,6 +47,13 @@ type InvokeRequest struct {
 	// facilitator turn (chief of staff).
 	Role Role
 
+	// PriorSessionID, when non-empty, is the SessionID the adapter
+	// returned on a prior Invoke for this member + thread. Adapters
+	// that support resume (e.g. Claude's --resume) use this to append
+	// the new prompt to an existing session instead of re-sending the
+	// full thread. Empty means "fresh session".
+	PriorSessionID string
+
 	// Member is the full member config for the agent being invoked.
 	// Only set when Role == RoleMember.
 	Member config.Member
@@ -94,7 +101,44 @@ type InvokeResponse struct {
 
 	// StopReason describes why the turn ended.
 	StopReason StopReason
+
+	// Usage records token counts + cost for this turn. Zero values
+	// mean the adapter did not report usage (e.g. Gemini CLI in plain
+	// stdout mode). Populated by Claude's JSON result and by the mock
+	// adapter's Auto mode so the TUI can display burn rate.
+	Usage Usage
+
+	// SessionID, when non-empty, identifies the adapter-side session
+	// that produced this response. The orchestrator persists this and
+	// passes it back on subsequent invocations so the adapter can
+	// resume (e.g. `claude --resume <id>`) instead of re-rendering the
+	// full thread. Empty when the adapter doesn't support resume.
+	SessionID string
 }
+
+// Usage reports resource consumption for one adapter invocation.
+type Usage struct {
+	InputTokens  int
+	OutputTokens int
+	// TotalCostUSD is the adapter's self-reported dollar cost for the
+	// turn. Sum of all turns gives session cost. Zero when unknown.
+	TotalCostUSD float64
+	// DurationMs is wall-clock milliseconds the adapter took.
+	DurationMs int
+}
+
+// Add returns u + v element-wise.
+func (u Usage) Add(v Usage) Usage {
+	return Usage{
+		InputTokens:  u.InputTokens + v.InputTokens,
+		OutputTokens: u.OutputTokens + v.OutputTokens,
+		TotalCostUSD: u.TotalCostUSD + v.TotalCostUSD,
+		DurationMs:   u.DurationMs + v.DurationMs,
+	}
+}
+
+// TotalTokens returns InputTokens + OutputTokens.
+func (u Usage) TotalTokens() int { return u.InputTokens + u.OutputTokens }
 
 // Adapter is implemented by each agent backend.
 type Adapter interface {

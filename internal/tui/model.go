@@ -88,7 +88,24 @@ type Options struct {
 	OnListPods    func() []string
 	OnListThreads func() []ThreadSummary
 	OnDoctor      func() []DoctorCheck
+
+	// OnUsageSnapshot returns the cumulative token / cost counters for
+	// the current thread. The TUI polls this when rendering the footer
+	// so users can see burn rate in real time. Nil means "no counter".
+	OnUsageSnapshot func() UsageSnapshot
 }
+
+// UsageSnapshot is the lifetime token/cost state for the current
+// thread, rendered in the footer to surface burn rate.
+type UsageSnapshot struct {
+	InputTokens  int
+	OutputTokens int
+	CostUSD      float64
+	TurnCount    int
+}
+
+// TotalTokens returns InputTokens + OutputTokens.
+func (u UsageSnapshot) TotalTokens() int { return u.InputTokens + u.OutputTokens }
 
 // ThreadSummary is the minimum info the threads-view needs.
 type ThreadSummary struct {

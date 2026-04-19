@@ -135,9 +135,19 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 				ThreadLength: len(req.Thread),
 				Effort:       string(req.Effort),
 			})
+			body := autoResponse(memberName, req.Thread)
+			// Synthesize plausible-looking token counts so the TUI's
+			// burn-rate display doesn't read as zeros against the mock.
+			in := 4 * len(renderThreadForAssert(req.Thread)) / 3
+			out := 4 * len(body) / 3
 			return adapter.InvokeResponse{
-				Body:       autoResponse(memberName, req.Thread),
+				Body:       body,
 				StopReason: adapter.StopDone,
+				SessionID:  "mock-" + memberName,
+				Usage: adapter.Usage{
+					InputTokens:  in,
+					OutputTokens: out,
+				},
 			}, nil
 		}
 		return adapter.InvokeResponse{}, fmt.Errorf("mock: script exhausted at call #%d (member=%q)", a.cursor+1, req.Member.Name)
