@@ -56,16 +56,19 @@ type Trigger string
 const (
 	TriggerUnresolvedRouting Trigger = "unresolved_routing"
 	TriggerMilestone         Trigger = "milestone"
-	TriggerHumanAsk          Trigger = "human_ask"
-	TriggerDrift             Trigger = "drift"
+	// TriggerGrayArea fires the chief-of-staff on every human message
+	// that hasn't yet been answered. The CoS decides whether to route
+	// the request to a member (via @mention) or answer it directly —
+	// useful when the request doesn't clearly land in anyone's
+	// specialization.
+	TriggerGrayArea Trigger = "gray_area"
 )
 
 // ValidTriggers enumerates the allowed Trigger values.
 var ValidTriggers = []Trigger{
 	TriggerUnresolvedRouting,
 	TriggerMilestone,
-	TriggerHumanAsk,
-	TriggerDrift,
+	TriggerGrayArea,
 }
 
 // Validate checks t is a known trigger.

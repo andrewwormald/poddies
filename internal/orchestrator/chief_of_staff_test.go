@@ -304,13 +304,13 @@ func TestLoop_CoS_Milestone_DefaultInterval(t *testing.T) {
 func TestHasTrigger(t *testing.T) {
 	cos := config.ChiefOfStaff{
 		Enabled:  true,
-		Triggers: []config.Trigger{config.TriggerMilestone, config.TriggerDrift},
+		Triggers: []config.Trigger{config.TriggerMilestone, config.TriggerGrayArea},
 	}
 	if !hasTrigger(cos, config.TriggerMilestone) {
 		t.Error("want milestone")
 	}
-	if hasTrigger(cos, config.TriggerHumanAsk) {
-		t.Error("human_ask not configured")
+	if hasTrigger(cos, config.TriggerUnresolvedRouting) {
+		t.Error("unresolved_routing not configured")
 	}
 	cos.Enabled = false
 	if hasTrigger(cos, config.TriggerMilestone) {

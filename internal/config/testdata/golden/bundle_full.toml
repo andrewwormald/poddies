@@ -11,7 +11,7 @@ schema_version = 1
     name = 'sam'
     adapter = 'claude'
     model = 'claude-haiku-4-5'
-    triggers = ['unresolved_routing', 'milestone', 'human_ask', 'drift']
+    triggers = ['unresolved_routing', 'milestone', 'gray_area']
 
 [[members]]
   name = 'alice'

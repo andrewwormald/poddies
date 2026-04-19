@@ -20,19 +20,21 @@ type RoutingDecision struct {
 }
 
 // Route picks the next speaker for a pod given the current thread,
-// the set of member names, and the pod's lead.
+// the set of member names, the pod's lead, and (optionally) the
+// chief-of-staff's resolved name so the CoS can be @-mentioned.
 //
-// Policy (matches the M3 design in memory/project_chief_of_staff.md
-// plus the A3 routing decision from the earlier planning conversation):
-//  1. Walk backwards past system events to find the last real turn.
-//  2. If that turn mentions a pod member (other than the speaker),
-//     invoke the first such member.
+// Policy:
+//  1. Walk backwards past system/permission events to the last real turn.
+//  2. If that turn mentions the CoS name (when set) or a pod member
+//     (other than the speaker), invoke the first such mention. The CoS
+//     is recognized by name match — callers wire an empty cosName when
+//     the CoS is disabled so @mentions to it don't accidentally route.
 //  3. Otherwise, if the last real turn is from the human and the pod
 //     lead is a configured member (i.e. not "human"), route to the lead.
 //  4. Otherwise halt — an agent producing no mentions signals quiescence.
 //
 // Route is a pure function: no I/O, no randomness, fully table-testable.
-func Route(events []thread.Event, members map[string]struct{}, lead string) RoutingDecision {
+func Route(events []thread.Event, members map[string]struct{}, lead, cosName string) RoutingDecision {
 	// find the last conversational event — system events and
 	// permission_* events are meta and never drive routing.
 	idx := -1
@@ -56,6 +58,9 @@ func Route(events []thread.Event, members map[string]struct{}, lead string) Rout
 	for _, m := range last.Mentions {
 		if m == last.From {
 			continue
+		}
+		if cosName != "" && m == cosName {
+			return RoutingDecision{Action: ActionInvoke, Member: cosName, Reason: "@mention of chief-of-staff " + cosName}
 		}
 		if _, ok := members[m]; ok {
 			return RoutingDecision{Action: ActionInvoke, Member: m, Reason: "@mention of " + m}

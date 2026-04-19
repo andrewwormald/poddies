@@ -26,7 +26,7 @@ func fullPod() *Pod {
 			Name:     "sam",
 			Adapter:  AdapterClaude,
 			Model:    "claude-haiku-4-5",
-			Triggers: []Trigger{TriggerUnresolvedRouting, TriggerMilestone, TriggerHumanAsk, TriggerDrift},
+			Triggers: []Trigger{TriggerUnresolvedRouting, TriggerMilestone, TriggerGrayArea},
 		},
 	}
 }

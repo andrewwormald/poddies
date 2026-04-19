@@ -185,6 +185,28 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 			}, nil
 		}
 
+		// Gray-area trigger fires whenever the most recent real event
+		// is a human message the CoS has not yet addressed. Lets the
+		// CoS either route to a member (@mention) or answer directly
+		// when the request doesn't clearly land in anyone's domain.
+		// Shares the one-rescue-per-run budget with unresolved_routing
+		// so a pod configured with both triggers doesn't fire the CoS
+		// twice (gray_area answer → halt → rescue → duplicate).
+		if shouldFireGrayArea(existing, pod.ChiefOfStaff) {
+			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit); err != nil {
+				return LoopResult{
+						Events:       appended,
+						StopReason:   LoopError,
+						TurnsRun:     turnsRun,
+						LastDecision: lastDecision,
+					},
+					fmt.Errorf("chief_of_staff gray_area: %w", err)
+			}
+			cosRescued = true
+			turnsSinceMilestone = 0
+			continue
+		}
+
 		// Milestone trigger fires before routing, once we have at least
 		// one member turn under our belt.
 		if turnsRun > 0 && turnsSinceMilestone >= milestoneEvery && hasTrigger(pod.ChiefOfStaff, config.TriggerMilestone) {
@@ -209,7 +231,11 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 				Reason: "first-member override: " + l.FirstMember,
 			}
 		} else {
-			decision = Route(existing, memberSet, pod.Lead)
+			cosName := ""
+			if pod.ChiefOfStaff.Enabled {
+				cosName = pod.ChiefOfStaff.ResolvedName()
+			}
+			decision = Route(existing, memberSet, pod.Lead, cosName)
 		}
 		lastDecision = decision
 		if decision.Action == ActionHalt {
@@ -242,6 +268,25 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 				TurnsRun:     turnsRun,
 				LastDecision: decision,
 			}, nil
+		}
+
+		// If Route picked the CoS (via @mention), detour through the
+		// CoS invocation path instead of treating it as a member turn.
+		// Consumes the rescue budget so a subsequent Route halt doesn't
+		// also fire unresolved_routing — the CoS has already had its say.
+		if pod.ChiefOfStaff.Enabled && decision.Member == pod.ChiefOfStaff.ResolvedName() {
+			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit); err != nil {
+				return LoopResult{
+						Events:       appended,
+						StopReason:   LoopError,
+						TurnsRun:     turnsRun,
+						LastDecision: decision,
+					},
+					fmt.Errorf("chief_of_staff mention: %w", err)
+			}
+			cosRescued = true
+			turnsSinceMilestone = 0
+			continue
 		}
 
 		member, ok := members[decision.Member]
@@ -358,6 +403,39 @@ func hasTrigger(cos config.ChiefOfStaff, t config.Trigger) bool {
 	for _, x := range cos.Triggers {
 		if x == t {
 			return true
+		}
+	}
+	return false
+}
+
+// shouldFireGrayArea reports whether the CoS should pre-emptively
+// respond to the current thread. True when:
+//   - the gray_area trigger is configured, and
+//   - the most recent non-meta event is a human message, and
+//   - that human message has no @mention (explicit mentions respect
+//     the human's stated intent — the CoS stays out of the way), and
+//   - no member and no CoS has yet responded since that human message.
+//
+// Meta events (system, permission_*) are skipped. A CoS response or a
+// member response "closes" the human turn — the next firing needs a
+// fresh human event.
+func shouldFireGrayArea(events []thread.Event, cos config.ChiefOfStaff) bool {
+	if !hasTrigger(cos, config.TriggerGrayArea) {
+		return false
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		switch events[i].Type {
+		case thread.EventSystem,
+			thread.EventPermissionRequest,
+			thread.EventPermissionGrant,
+			thread.EventPermissionDeny:
+			continue
+		case thread.EventMessage:
+			// Any response closes the turn (member or CoS).
+			return false
+		case thread.EventHuman:
+			// Explicit @mention → defer to the human's choice.
+			return len(events[i].Mentions) == 0
 		}
 	}
 	return false

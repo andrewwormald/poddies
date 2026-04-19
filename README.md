@@ -100,6 +100,15 @@ triggers = ["milestone", "unresolved_routing"]
   summary.
 - `unresolved_routing` fires once per `poddies run` when routing halts,
   giving the facilitator a single chance to propose a next speaker.
+- `gray_area` fires whenever the human posts a message with no
+  `@mention`. The facilitator then either routes via `@name` to a
+  member who owns the request, or answers it directly when no one does.
+  Explicit human `@mentions` suppress this trigger — the facilitator
+  stays out of the way when you've told it who you want.
+
+The chief-of-staff is addressable via `@<name>` from members and the
+human when enabled — e.g. `@sam what do you think?` routes to the
+facilitator.
 
 ## Testing
 

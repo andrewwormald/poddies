@@ -9,7 +9,7 @@ import (
 var abMembers = MemberSet([]string{"alice", "bob"})
 
 func TestRoute_Empty_Halts(t *testing.T) {
-	got := Route(nil, abMembers, "human")
+	got := Route(nil, abMembers, "human", "")
 	if got.Action != ActionHalt {
 		t.Errorf("want halt, got %+v", got)
 	}
@@ -20,7 +20,7 @@ func TestRoute_OnlySystem_Halts(t *testing.T) {
 		{Type: thread.EventSystem, Body: "pod started"},
 		{Type: thread.EventSystem, Body: "routed"},
 	}
-	got := Route(events, abMembers, "human")
+	got := Route(events, abMembers, "human", "")
 	if got.Action != ActionHalt {
 		t.Errorf("want halt, got %+v", got)
 	}
@@ -31,7 +31,7 @@ func TestRoute_LastMentionsMember_Invokes(t *testing.T) {
 		{Type: thread.EventHuman, From: "human", Body: "start", Mentions: nil},
 		{Type: thread.EventMessage, From: "alice", Body: "@bob over to you", Mentions: []string{"bob"}},
 	}
-	got := Route(events, abMembers, "human")
+	got := Route(events, abMembers, "human", "")
 	if got.Action != ActionInvoke || got.Member != "bob" {
 		t.Errorf("want invoke bob, got %+v", got)
 	}
@@ -42,7 +42,7 @@ func TestRoute_SkipsTrailingSystem_ToReachMentionEvent(t *testing.T) {
 		{Type: thread.EventMessage, From: "alice", Body: "@bob go", Mentions: []string{"bob"}},
 		{Type: thread.EventSystem, Body: "facilitator note"},
 	}
-	got := Route(events, abMembers, "human")
+	got := Route(events, abMembers, "human", "")
 	if got.Action != ActionInvoke || got.Member != "bob" {
 		t.Errorf("want invoke bob after skipping system, got %+v", got)
 	}
@@ -52,7 +52,7 @@ func TestRoute_LastMentionsNonMember_Halts(t *testing.T) {
 	events := []thread.Event{
 		{Type: thread.EventMessage, From: "alice", Body: "@carol?", Mentions: []string{"carol"}},
 	}
-	got := Route(events, abMembers, "human")
+	got := Route(events, abMembers, "human", "")
 	if got.Action != ActionHalt {
 		t.Errorf("want halt (carol not a member), got %+v", got)
 	}
@@ -62,7 +62,7 @@ func TestRoute_SelfMentionSkipped(t *testing.T) {
 	events := []thread.Event{
 		{Type: thread.EventMessage, From: "alice", Body: "@alice hmm", Mentions: []string{"alice"}},
 	}
-	got := Route(events, abMembers, "human")
+	got := Route(events, abMembers, "human", "")
 	if got.Action != ActionHalt {
 		t.Errorf("want halt on self-mention, got %+v", got)
 	}
@@ -72,7 +72,7 @@ func TestRoute_MultipleMentions_FirstActionableWins(t *testing.T) {
 	events := []thread.Event{
 		{Type: thread.EventMessage, From: "alice", Body: "@carol and @bob", Mentions: []string{"carol", "bob"}},
 	}
-	got := Route(events, abMembers, "human")
+	got := Route(events, abMembers, "human", "")
 	if got.Action != ActionInvoke || got.Member != "bob" {
 		t.Errorf("want invoke bob (carol is not a member), got %+v", got)
 	}
@@ -82,7 +82,7 @@ func TestRoute_HumanNoMention_LeadIsMember_RoutesToLead(t *testing.T) {
 	events := []thread.Event{
 		{Type: thread.EventHuman, From: "human", Body: "what should we do?"},
 	}
-	got := Route(events, abMembers, "alice")
+	got := Route(events, abMembers, "alice", "")
 	if got.Action != ActionInvoke || got.Member != "alice" {
 		t.Errorf("want invoke alice, got %+v", got)
 	}
@@ -92,7 +92,7 @@ func TestRoute_HumanNoMention_LeadIsHuman_Halts(t *testing.T) {
 	events := []thread.Event{
 		{Type: thread.EventHuman, From: "human", Body: "what do we do?"},
 	}
-	got := Route(events, abMembers, "human")
+	got := Route(events, abMembers, "human", "")
 	if got.Action != ActionHalt {
 		t.Errorf("want halt when lead is human, got %+v", got)
 	}
@@ -102,7 +102,7 @@ func TestRoute_HumanNoMention_LeadNotAMember_Halts(t *testing.T) {
 	events := []thread.Event{
 		{Type: thread.EventHuman, From: "human", Body: "what?"},
 	}
-	got := Route(events, abMembers, "ghost")
+	got := Route(events, abMembers, "ghost", "")
 	if got.Action != ActionHalt {
 		t.Errorf("want halt when lead isn't a member, got %+v", got)
 	}
@@ -112,7 +112,7 @@ func TestRoute_AgentNoMention_Halts(t *testing.T) {
 	events := []thread.Event{
 		{Type: thread.EventMessage, From: "alice", Body: "done"},
 	}
-	got := Route(events, abMembers, "alice")
+	got := Route(events, abMembers, "alice", "")
 	if got.Action != ActionHalt {
 		t.Errorf("want halt when agent produces no mentions, got %+v", got)
 	}
@@ -124,7 +124,7 @@ func TestRoute_MentionedMemberEqualsFrom_TreatedAsSelfMention(t *testing.T) {
 	events := []thread.Event{
 		{Type: thread.EventMessage, From: "alice", Body: "alice thinks @alice", Mentions: []string{"alice"}},
 	}
-	got := Route(events, abMembers, "alice")
+	got := Route(events, abMembers, "alice", "")
 	if got.Action != ActionHalt {
 		t.Errorf("want halt, got %+v", got)
 	}
