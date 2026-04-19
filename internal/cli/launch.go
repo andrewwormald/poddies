@@ -44,6 +44,19 @@ func (a *App) launchTUI(ctx context.Context) error {
 // create one when absent. ModeAuto prefers local; we honour that here
 // by defaulting to ./poddies when nothing exists.
 func (a *App) resolveOrInit() (string, error) {
+	// If the current directory has a file (not a directory) at
+	// ./poddies, ResolveRoot errors — surface a clean explanation
+	// rather than the raw stat message. Most common trigger: the user
+	// ran `go build` in the repo and got a binary named `poddies`
+	// sitting next to where the config directory would go.
+	localPath := config.LocalDir(a.Cwd)
+	if info, err := os.Stat(localPath); err == nil && !info.IsDir() {
+		return "", fmt.Errorf(
+			"%s exists but is a file, not a directory — remove it (e.g. a stray `go build` binary) or run poddies from a different directory",
+			localPath,
+		)
+	}
+
 	res, err := config.ResolveRoot(config.ModeAuto, a.Cwd, a.Home, a.EnvRoot)
 	if err == nil {
 		return res.Dir, nil
