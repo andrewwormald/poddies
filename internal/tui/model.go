@@ -93,6 +93,30 @@ type Options struct {
 	// the current thread. The TUI polls this when rendering the footer
 	// so users can see burn rate in real time. Nil means "no counter".
 	OnUsageSnapshot func() UsageSnapshot
+
+	// SessionID is the ID of the session currently opened in this TUI
+	// instance. Shown in the header for orientation.
+	SessionID string
+
+	// OnListSessions returns the recent sessions under this root,
+	// sorted newest first. Used by /resume.
+	OnListSessions func() []SessionSummary
+
+	// OnResumeSession is invoked when the user picks a session in the
+	// resume picker. The Model records the target ID and triggers
+	// tea.Quit; the launch wrapper restarts the TUI bound to that
+	// session (no OS-level re-exec).
+	OnResumeSession func(id string)
+}
+
+// SessionSummary is one row of the resume picker.
+type SessionSummary struct {
+	ID           string
+	Pod          string
+	TurnCount    int
+	LastSpeaker  string
+	LastEditedAt string // pre-formatted by the caller
+	IsCurrent    bool   // highlight if this is the running session
 }
 
 // UsageSnapshot is the lifetime token/cost state for the current

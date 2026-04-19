@@ -28,7 +28,7 @@ func TestE2E_PermissionFlow(t *testing.T) {
 		"--model", "m",
 		"--effort", "high",
 	)
-	root := filepath.Join(cwd, "poddies")
+	root := filepath.Join(cwd, ".poddies")
 	pdir := filepath.Join(root, "pods", "demo")
 	p, err := config.LoadPod(pdir)
 	if err != nil {

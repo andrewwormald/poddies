@@ -45,7 +45,7 @@ func TestE2E_MultiTurn_Loop(t *testing.T) {
 	}
 
 	// set lead=alice so routing flows: human → alice (lead) → bob (mention) → quiescent.
-	root := filepath.Join(cwd, "poddies")
+	root := filepath.Join(cwd, ".poddies")
 	podDir := filepath.Join(root, "pods", "demo")
 	p, err := config.LoadPod(podDir)
 	if err != nil {

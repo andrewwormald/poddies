@@ -12,15 +12,28 @@ import (
 
 	"github.com/andrewwormald/poddies/internal/config"
 	"github.com/andrewwormald/poddies/internal/orchestrator"
+	"github.com/andrewwormald/poddies/internal/session"
 	"github.com/andrewwormald/poddies/internal/thread"
 	"github.com/andrewwormald/poddies/internal/tui"
 )
 
-// launchTUI is the poddies-with-no-args entrypoint. It handles the
-// cold-launch bootstrap flow (init if no root, pod-create if no pods)
-// and then hands off to the bubbletea TUI with an active pod + thread
-// session wired up.
+// launchTUI is the poddies-with-no-args entrypoint. Cold-launch flow:
+// auto-migrate the legacy ./poddies/ directory if present, bootstrap
+// the root (.poddies) if missing, pick or create a pod, create a
+// fresh session for this launch, kick off an async cleanup goroutine,
+// hand off to the TUI. If the TUI returns with a resume target, loop
+// with that session instead of a fresh one — lets `/resume` work
+// without the OS having to re-exec the binary.
 func (a *App) launchTUI(ctx context.Context) error {
+	// Legacy migration: if ./poddies/ is a directory and ./.poddies/
+	// isn't there, move it. One-time per machine; subsequent launches
+	// are no-ops.
+	if migrated, err := session.MigrateLegacyRoot(a.Cwd); err != nil {
+		return fmt.Errorf("migrate legacy root: %w", err)
+	} else if migrated {
+		fmt.Fprintln(a.Out, "migrated legacy ./poddies/ → ./.poddies/ (hidden)")
+	}
+
 	root, err := a.resolveOrInit()
 	if err != nil {
 		return err
@@ -31,13 +44,64 @@ func (a *App) launchTUI(ctx context.Context) error {
 		return err
 	}
 
-	threadName := DefaultThreadName
-	log := thread.Open(ThreadPath(root, pod, threadName))
-	if err := log.EnsureFile(); err != nil {
-		return err
-	}
+	// Kick off background cleanup. Async so the TUI doesn't wait on
+	// disk scans before opening; 1-hour timeout per user spec.
+	a.startCleanupGoroutine(root)
 
-	return a.launchTUIWithSession(ctx, root, pod, log)
+	// First iteration: always a fresh session. Resume loop iterates
+	// into whichever session the TUI asks for.
+	var resumeTo string
+	for {
+		var s session.Session
+		if resumeTo != "" {
+			if s, err = session.Find(root, resumeTo); err != nil {
+				return fmt.Errorf("resume: %w", err)
+			}
+			resumeTo = ""
+		} else {
+			if s, err = session.Create(root, pod); err != nil {
+				return fmt.Errorf("create session: %w", err)
+			}
+		}
+		log := thread.Open(session.ThreadPath(root, s.ID))
+		if err := log.EnsureFile(); err != nil {
+			return err
+		}
+		next, err := a.launchTUIWithSession(ctx, root, pod, log, s.ID)
+		if err != nil {
+			return err
+		}
+		if next == "" {
+			return nil
+		}
+		resumeTo = next
+	}
+}
+
+// startCleanupGoroutine runs session.CleanupStale once, with a
+// 1-hour context cap. Errors are surfaced to stderr but never block
+// the TUI. Goroutine exits when the scan completes or the context
+// times out — whichever comes first.
+func (a *App) startCleanupGoroutine(root string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+		defer cancel()
+		maxAge := time.Duration(a.cleanupDays()) * 24 * time.Hour
+		removed, err := session.CleanupStale(ctx, root, maxAge)
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			fmt.Fprintf(a.Err, "cleanup: %v\n", err)
+		}
+		if removed > 0 {
+			fmt.Fprintf(a.Err, "cleanup: removed %d stale session(s)\n", removed)
+		}
+	}()
+}
+
+// cleanupDays reads the config cleanup window, defaulting to 30.
+// Configurable per root via config.toml in a future commit; for now
+// returns the default constant.
+func (a *App) cleanupDays() int {
+	return session.DefaultCleanupDays
 }
 
 // resolveOrInit returns the poddies root directory, prompting to
@@ -104,15 +168,16 @@ func (a *App) pickOrCreatePod(root string) (string, error) {
 }
 
 // launchTUIWithSession wires a TUI session for the given pod + log.
-// Extracted so tests / future multi-pod switching can reuse it.
-func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *thread.Log) error {
+// Returns the ID of a session the user wants to resume (from /resume),
+// or empty string on a normal quit. Caller loops accordingly.
+func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *thread.Log, sessionID string) (string, error) {
 	podCfg, err := config.LoadPod(PodDir(root, pod))
 	if err != nil {
-		return err
+		return "", err
 	}
 	memberNames, err := listMemberNames(PodDir(root, pod))
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	start := func(lctx context.Context, kickoff string, onEvent func(thread.Event)) (orchestrator.LoopResult, error) {
@@ -232,24 +297,53 @@ func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *t
 		return out
 	}
 
-	return tui.Run(ctx, tui.Options{
-		PodName:        podCfg.Name,
-		Members:        memberNames,
-		Lead:           podCfg.Lead,
-		StartLoop:      start,
-		GetPending:     pending,
-		OnApprove:      approve,
-		OnDeny:         deny,
-		OnAddMember:    addMember,
-		OnRemoveMember: removeMember,
-		OnEditMember:   editMember,
-		OnListMembers:  listMembers,
-		OnListPods:     listPods,
-		OnListThreads:  listThreads,
+	listSessions := func() []tui.SessionSummary {
+		list, err := session.ListRecent(root)
+		if err != nil {
+			return nil
+		}
+		out := make([]tui.SessionSummary, 0, len(list))
+		for _, s := range list {
+			out = append(out, tui.SessionSummary{
+				ID:           s.ID,
+				Pod:          s.Pod,
+				TurnCount:    s.TurnCount,
+				LastSpeaker:  s.LastSpeaker,
+				LastEditedAt: s.LastEditedAt.Format(time.RFC3339),
+				IsCurrent:    s.ID == sessionID,
+			})
+		}
+		return out
+	}
+
+	// Resume output channel: the TUI sets this via OnResumeSession when
+	// the user picks a session from the palette. After the TUI quits we
+	// pick this up and loop the outer launchTUI into the new session.
+	var resumeTarget string
+	onResumeSession := func(id string) { resumeTarget = id }
+
+	err = tui.Run(ctx, tui.Options{
+		PodName:         podCfg.Name,
+		SessionID:       sessionID,
+		Members:         memberNames,
+		Lead:            podCfg.Lead,
+		StartLoop:       start,
+		GetPending:      pending,
+		OnApprove:       approve,
+		OnDeny:          deny,
+		OnAddMember:     addMember,
+		OnRemoveMember:  removeMember,
+		OnEditMember:    editMember,
+		OnListMembers:   listMembers,
+		OnListPods:      listPods,
+		OnListThreads:   listThreads,
+		OnListSessions:  listSessions,
+		OnResumeSession: onResumeSession,
 		OnExportPod:     exportPod,
 		OnDoctor:        runDoctor,
 		OnUsageSnapshot: usageSnapshot,
 	}, a.In, a.Out)
+	return resumeTarget, err
 }
 
 // Silence unused imports if some branches are compiled out in tests.

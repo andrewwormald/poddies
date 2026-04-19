@@ -58,6 +58,13 @@ func (m Model) renderWizard() string {
 func (m Model) renderHeader() string {
 	var parts []string
 	parts = append(parts, headerStyle.Render(fmt.Sprintf("poddies · %s", m.opts.PodName)))
+	if m.opts.SessionID != "" {
+		short := m.opts.SessionID
+		if len(short) > 19 {
+			short = short[:19]
+		}
+		parts = append(parts, metaStyle.Render("session: "+short))
+	}
 	if len(m.opts.Members) > 0 {
 		parts = append(parts, metaStyle.Render("members: "+strings.Join(m.opts.Members, ", ")))
 	}

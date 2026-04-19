@@ -18,7 +18,7 @@ func TestInit_Local_CreatesRoot(t *testing.T) {
 	if res.Source != config.SourceLocal {
 		t.Errorf("want local, got %s", res.Source)
 	}
-	if res.Dir != filepath.Join(cwd, "poddies") {
+	if res.Dir != filepath.Join(cwd, ".poddies") {
 		t.Errorf("unexpected dir %s", res.Dir)
 	}
 	if res.AlreadyExisted {
@@ -69,7 +69,7 @@ func TestInit_Idempotent_AlreadyInitialized(t *testing.T) {
 
 func TestInit_NonEmptyDir_WithoutMarker_Errors(t *testing.T) {
 	cwd := t.TempDir()
-	dir := filepath.Join(cwd, "poddies")
+	dir := filepath.Join(cwd, ".poddies")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestInit_NonEmptyDir_WithoutMarker_Errors(t *testing.T) {
 
 func TestInit_NonEmptyDir_Force_OK(t *testing.T) {
 	cwd := t.TempDir()
-	dir := filepath.Join(cwd, "poddies")
+	dir := filepath.Join(cwd, ".poddies")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestInit_NonEmptyDir_Force_OK(t *testing.T) {
 
 func TestInit_RootPath_IsFile_Errors(t *testing.T) {
 	cwd := t.TempDir()
-	bad := filepath.Join(cwd, "poddies")
+	bad := filepath.Join(cwd, ".poddies")
 	if err := os.WriteFile(bad, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestInitCmd_Local(t *testing.T) {
 	if !strings.Contains(out.String(), "initialized") {
 		t.Errorf("want 'initialized' in output, got %q", out.String())
 	}
-	if _, err := os.Stat(filepath.Join(cwd, "poddies", ConfigFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(cwd, ".poddies", ConfigFileName)); err != nil {
 		t.Errorf("config.toml missing: %v", err)
 	}
 }
@@ -205,7 +205,7 @@ func TestInitCmd_DefaultsToLocal(t *testing.T) {
 	if err := runCmd(t, a, "init"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(cwd, "poddies", ConfigFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(cwd, ".poddies", ConfigFileName)); err != nil {
 		t.Errorf("expected local init by default: %v", err)
 	}
 }

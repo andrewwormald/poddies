@@ -56,7 +56,7 @@ func TestE2E_CoS_UnresolvedRouting_Rescue(t *testing.T) {
 			"--effort", "medium",
 		)
 	}
-	root := filepath.Join(cwd, "poddies")
+	root := filepath.Join(cwd, ".poddies")
 
 	// set lead=alice and enable CoS unresolved_routing
 	pdir := filepath.Join(root, "pods", "demo")
@@ -121,7 +121,7 @@ func TestE2E_CoS_Milestone(t *testing.T) {
 			"--effort", "medium",
 		)
 	}
-	root := filepath.Join(cwd, "poddies")
+	root := filepath.Join(cwd, ".poddies")
 
 	pdir := filepath.Join(root, "pods", "demo")
 	p, err := config.LoadPod(pdir)

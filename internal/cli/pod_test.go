@@ -18,7 +18,7 @@ func initLocalRoot(t *testing.T) (cwd, root string) {
 	if _, err := Init(cwd, t.TempDir(), config.ModeLocal, false); err != nil {
 		t.Fatal(err)
 	}
-	return cwd, filepath.Join(cwd, "poddies")
+	return cwd, filepath.Join(cwd, ".poddies")
 }
 
 func TestCreatePod_Succeeds(t *testing.T) {

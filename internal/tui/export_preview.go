@@ -11,3 +11,9 @@ func exportPreview(data []byte) thread.Event {
 		Body: "--- exported pod bundle ---\n" + string(data) + "\n--- end bundle ---",
 	}
 }
+
+// resumePreview wraps the session list as a synthetic system event
+// so the user sees the pickable IDs inline in the transcript.
+func resumePreview(body string) thread.Event {
+	return thread.Event{Type: thread.EventSystem, Body: body}
+}

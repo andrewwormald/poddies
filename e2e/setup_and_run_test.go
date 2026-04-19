@@ -75,7 +75,7 @@ func TestE2E_SetupAndScriptedThread(t *testing.T) {
 		)
 	}
 
-	root := filepath.Join(cwd, "poddies")
+	root := filepath.Join(cwd, ".poddies")
 
 	// sanity: members exist on disk
 	for _, n := range []string{"alice", "bob"} {

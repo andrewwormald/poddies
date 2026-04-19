@@ -40,9 +40,14 @@ type Resolved struct {
 // ErrNoRoot is returned when no poddies root directory can be found.
 var ErrNoRoot = errors.New("no poddies root found")
 
+// LocalDirName is the hidden directory name used for project-scoped
+// poddies state. Hidden (`.` prefix) so it doesn't clutter repo roots
+// where poddies is commonly used.
+const LocalDirName = ".poddies"
+
 // LocalDir returns the local (project-scoped) poddies directory for cwd.
 func LocalDir(cwd string) string {
-	return filepath.Join(cwd, "poddies")
+	return filepath.Join(cwd, LocalDirName)
 }
 
 // GlobalDir returns the global (user-scoped) poddies directory for home.

@@ -97,7 +97,7 @@ func TestE2E_RunCommand_AppendsTurnToThread(t *testing.T) {
 	// a fresh file, and compare THAT against the golden. This keeps the
 	// golden schema-stable without requiring us to inject deterministic
 	// ID/time generators through the CLI surface.
-	logPath := filepath.Join(cwd, "poddies", "pods", "demo", "threads", "default.jsonl")
+	logPath := filepath.Join(cwd, ".poddies", "pods", "demo", "threads", "default.jsonl")
 	events, err := thread.Open(logPath).Load()
 	if err != nil {
 		t.Fatal(err)
