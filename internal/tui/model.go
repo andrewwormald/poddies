@@ -21,8 +21,33 @@ const (
 	// StatePrompting means a Wizard is active; input is captured by the
 	// wizard, not the chat loop.
 	StatePrompting
+	// StatePalette means the command palette is open (user pressed ':').
+	StatePalette
 	// StateQuit means the program has been asked to exit.
 	StateQuit
+)
+
+// View identifies which pane the TUI is currently rendering. Most
+// views are read-only in v1; rich CRUD happens via slash commands
+// inside ViewThread or by exiting back to the thread view.
+type View int
+
+const (
+	// ViewThread is the chat pane. Default landing view.
+	ViewThread View = iota
+	// ViewMembers is a read-only list of pod members.
+	ViewMembers
+	// ViewPods is a read-only list of pods under the root.
+	ViewPods
+	// ViewThreads is a read-only list of threads for the current pod.
+	ViewThreads
+	// ViewPerms is a dedicated view for pending permission requests
+	// (same data as the thread-embedded pane, just full-screen).
+	ViewPerms
+	// ViewDoctor runs the adapter/root health checks and displays them.
+	ViewDoctor
+	// ViewHelp is the help overlay.
+	ViewHelp
 )
 
 // StartLoopFn starts an orchestrator loop with the given kickoff
@@ -58,6 +83,27 @@ type Options struct {
 	OnEditMember   func(name, field, value string) error
 	OnListMembers  func() []string
 	OnExportPod    func() ([]byte, error)
+
+	// Read-only callbacks for the :pods / :threads / :doctor views.
+	OnListPods    func() []string
+	OnListThreads func() []ThreadSummary
+	OnDoctor      func() []DoctorCheck
+}
+
+// ThreadSummary is the minimum info the threads-view needs.
+type ThreadSummary struct {
+	Name       string
+	Events     int
+	LastFrom   string
+	ModifiedAt string
+	Corrupt    bool
+}
+
+// DoctorCheck is one row of the :doctor view.
+type DoctorCheck struct {
+	Name    string
+	Status  string // "pass" | "warn" | "fail"
+	Message string
 }
 
 // AddMemberSpec bundles the answers from an addMemberWizard so the CLI
@@ -107,6 +153,14 @@ type Model struct {
 	// wizard is active when state == StatePrompting. Input is routed to
 	// the wizard's Next() instead of the chat loop. Nil means no wizard.
 	wizard *Wizard
+
+	// view is the currently-rendered pane. Command palette and :cmd
+	// invocations mutate this; Esc returns to ViewThread from any
+	// other view.
+	view View
+
+	// paletteInput is the text buffer while the : palette is open.
+	paletteInput string
 }
 
 // NewModel constructs an initial Model. Callers typically hand it to
@@ -141,6 +195,10 @@ func (m Model) PendingRequests() []thread.Event { return m.pendingRequests }
 // ActiveWizard returns the currently active wizard, or nil. Exported
 // for tests.
 func (m Model) ActiveWizard() *Wizard { return m.wizard }
+
+// ActiveView returns which pane the TUI is rendering. Exported for
+// tests so they don't need to rely on View() string output.
+func (m Model) ActiveView() View { return m.view }
 
 // CurrentState returns the coarse phase of the Model. For tests.
 func (m Model) CurrentState() State { return m.state }

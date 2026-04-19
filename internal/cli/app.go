@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
 	"github.com/andrewwormald/poddies/internal/adapter"
@@ -31,6 +32,26 @@ type App struct {
 	// "use the global adapter registry" (production wiring). Tests
 	// inject a map-backed lookup to sidestep the registry entirely.
 	AdapterLookup orchestrator.AdapterLookup
+}
+
+// stdinIsTTY reports whether a.In is a real terminal. Returns false
+// when a.In isn't an *os.File (bytes.Buffer in tests, pipes in CI),
+// so those cases correctly skip the interactive TUI launch.
+func (a *App) stdinIsTTY() bool {
+	f, ok := a.In.(*os.File)
+	if !ok {
+		return false
+	}
+	return isatty.IsTerminal(f.Fd())
+}
+
+// stdoutIsTTY mirrors stdinIsTTY for a.Out.
+func (a *App) stdoutIsTTY() bool {
+	f, ok := a.Out.(*os.File)
+	if !ok {
+		return false
+	}
+	return isatty.IsTerminal(f.Fd())
 }
 
 // adapterLookup returns a.AdapterLookup if set, otherwise adapter.Get.
@@ -64,18 +85,57 @@ func NewAppFromEnv() (*App, error) {
 // NewRootCmd constructs the root "poddies" cobra command with all
 // subcommands attached. Each call produces a fresh tree so parallel
 // tests don't share flag state.
+//
+// poddies is TUI-first: `poddies` with no subcommand launches the
+// bubbletea interface. Subcommands stay wired up as a scripting
+// back-door (CI, automation, test harnesses) but are hidden from
+// `poddies --help` so the day-to-day surface stays one command.
 func (a *App) NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "poddies",
 		Short:         "Run a pod of AI agents as a shared Slack-thread-style conversation.",
+		Long:          "Run `poddies` to open the TUI. All pod / member / thread management happens inside.\n\nScripting subcommands exist but are hidden — pass --help-scripting to see them.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       Version,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Skip the TUI when stdin/stdout aren't real terminals — CI,
+			// `go run .` tests, and piped invocations would hang forever
+			// on a TUI. Print help instead so the exit is clean and fast.
+			if !a.stdinIsTTY() || !a.stdoutIsTTY() {
+				return cmd.Help()
+			}
+			return a.launchTUI(cmd.Context())
+		},
 	}
 	root.SetOut(a.Out)
 	root.SetErr(a.Err)
 	root.SetIn(a.In)
 
-	root.AddCommand(a.newInitCmd(), a.newPodCmd(), a.newMemberCmd(), a.newDoctorCmd(), a.newRunCmd(), a.newThreadCmd())
+	subs := []*cobra.Command{
+		a.newInitCmd(),
+		a.newPodCmd(),
+		a.newMemberCmd(),
+		a.newRunCmd(),
+		a.newThreadCmd(),
+	}
+	for _, s := range subs {
+		s.Hidden = true
+		root.AddCommand(s)
+	}
+	// doctor stays visible — it's read-only diagnostics, useful before
+	// launching the TUI to confirm adapter binaries are present.
+	root.AddCommand(a.newDoctorCmd())
+
+	// --help-scripting reveals the hidden commands for users who want
+	// to automate pod setup from CI.
+	root.Flags().Bool("help-scripting", false, "show hidden scripting subcommands")
+	root.PreRun = func(cmd *cobra.Command, args []string) {
+		if show, _ := cmd.Flags().GetBool("help-scripting"); show {
+			for _, c := range cmd.Commands() {
+				c.Hidden = false
+			}
+		}
+	}
 	return root
 }

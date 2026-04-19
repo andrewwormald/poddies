@@ -111,6 +111,11 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 
 // onKey dispatches keyboard input based on state.
 func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Palette capture takes precedence over everything except Ctrl-C.
+	if m.state == StatePalette {
+		return m.onPaletteKey(msg)
+	}
+
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		// always quits, cancelling any in-flight loop
@@ -124,19 +129,45 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m = m.cancelWizard()
 			return m, waitForSubMsg(m.sub)
 		}
+		// From any non-thread view, Esc returns home.
+		if m.view != ViewThread {
+			m.view = ViewThread
+			m.statusLine = ""
+			return m, waitForSubMsg(m.sub)
+		}
 	case tea.KeyEnter:
 		if m.state == StatePrompting {
 			text := m.input.Value()
 			m.input.SetValue("")
 			return m.wizardSubmit(text)
 		}
-		if m.state == StateIdle {
+		if m.state == StateIdle && m.view == ViewThread {
 			text := m.input.Value()
 			if text == "" {
 				return m, waitForSubMsg(m.sub)
 			}
 			m.input.SetValue("")
 			return m.submit(text)
+		}
+	}
+
+	// Global key shortcuts (available from any view in Idle/Palette-less state):
+	//   : → open command palette
+	//   ? → open help view
+	// These are intercepted before input field updates so typing them
+	// in the chat would need Shift/etc. (future refinement if needed).
+	if m.state == StateIdle && msg.Type == tea.KeyRunes {
+		switch string(msg.Runes) {
+		case ":":
+			if m.view != ViewThread || m.input.Value() == "" {
+				m = m.openPalette()
+				return m, waitForSubMsg(m.sub)
+			}
+		case "?":
+			if m.view != ViewThread || m.input.Value() == "" {
+				m.view = ViewHelp
+				return m, waitForSubMsg(m.sub)
+			}
 		}
 	}
 
@@ -156,6 +187,11 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.state == StateIdle && m.view == ViewThread {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
 	if m.state == StateIdle || m.state == StatePrompting {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)

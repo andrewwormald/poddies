@@ -17,22 +17,12 @@ var (
 	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 )
 
-// View implements tea.Model.
+// View implements tea.Model. Dispatches to the active view's renderer.
 func (m Model) View() string {
 	if !m.ready {
 		return "loading…"
 	}
-
-	header := m.renderHeader()
-	body := m.viewport.View()
-	var footer string
-	if m.state == StatePrompting && m.wizard != nil {
-		footer = m.renderWizard()
-	} else {
-		footer = m.renderFooter()
-	}
-
-	return lipgloss.JoinVertical(lipgloss.Top, header, body, footer)
+	return m.renderActiveView()
 }
 
 // renderWizard replaces the footer pane when a wizard is active.
