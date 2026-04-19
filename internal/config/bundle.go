@@ -30,12 +30,19 @@ func (b *Bundle) Validate() error {
 		return fmt.Errorf("pod: %w", err)
 	}
 	seen := make(map[string]struct{}, len(b.Members))
+	cosName := ""
+	if b.Pod.ChiefOfStaff.Enabled {
+		cosName = b.Pod.ChiefOfStaff.ResolvedName()
+	}
 	for i, m := range b.Members {
 		if err := m.Validate(); err != nil {
 			return fmt.Errorf("members[%d]: %w", i, err)
 		}
 		if _, dup := seen[m.Name]; dup {
 			return fmt.Errorf("duplicate member name %q in bundle", m.Name)
+		}
+		if cosName != "" && m.Name == cosName {
+			return fmt.Errorf("member %q collides with chief_of_staff name", m.Name)
 		}
 		seen[m.Name] = struct{}{}
 	}
@@ -101,14 +108,42 @@ func NewBundleFromPodDir(podDir string) (*Bundle, error) {
 // pod.toml and members/*.toml from b. If overwrite is false and pod.toml
 // already exists the call fails. podDir is the directory for the pod itself
 // (i.e. <root>/pods/<name>), not the root.
+//
+// On --overwrite, any existing *.toml files in the members directory that
+// are not named by the bundle are removed. Without this, an overwrite would
+// produce a hybrid pod (bundle members plus stale members from the previous
+// pod) — confusing and not what "overwrite" implies.
 func WriteBundleToPodDir(podDir string, b *Bundle, overwrite bool) error {
 	podFile := filepath.Join(podDir, PodFileName)
 	if _, err := os.Stat(podFile); err == nil && !overwrite {
 		return fmt.Errorf("pod.toml already exists at %q (use --overwrite to replace)", podFile)
 	}
 
-	if err := os.MkdirAll(filepath.Join(podDir, MembersDirName), 0o700); err != nil {
+	membersDir := filepath.Join(podDir, MembersDirName)
+	if err := os.MkdirAll(membersDir, 0o700); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
+	}
+
+	if overwrite {
+		wanted := make(map[string]struct{}, len(b.Members))
+		for _, m := range b.Members {
+			wanted[m.Name+".toml"] = struct{}{}
+		}
+		entries, err := os.ReadDir(membersDir)
+		if err != nil {
+			return fmt.Errorf("read members dir: %w", err)
+		}
+		for _, e := range entries {
+			if e.IsDir() || filepath.Ext(e.Name()) != ".toml" {
+				continue
+			}
+			if _, keep := wanted[e.Name()]; keep {
+				continue
+			}
+			if err := os.Remove(filepath.Join(membersDir, e.Name())); err != nil {
+				return fmt.Errorf("remove stale member %q: %w", e.Name(), err)
+			}
+		}
 	}
 
 	if err := SavePod(podDir, &b.Pod); err != nil {

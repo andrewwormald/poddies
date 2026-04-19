@@ -175,6 +175,11 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 	// second halt later in the same run is accepted as genuine, since
 	// the CoS has already had its chance to steer the conversation.
 	cosRescued := false
+	// firstMember is consumed after the first invocation attempt so
+	// the override doesn't re-fire on subsequent iterations when the
+	// first turn took a non-member path (e.g. @CoS routing) and left
+	// turnsRun at zero.
+	firstMember := l.FirstMember
 	for turnsRun < cap {
 		if err := ctx.Err(); err != nil {
 			return LoopResult{
@@ -224,12 +229,13 @@ func (l *Loop) Run(ctx context.Context) (LoopResult, error) {
 		}
 
 		var decision RoutingDecision
-		if turnsRun == 0 && l.FirstMember != "" {
+		if firstMember != "" {
 			decision = RoutingDecision{
 				Action: ActionInvoke,
-				Member: l.FirstMember,
-				Reason: "first-member override: " + l.FirstMember,
+				Member: firstMember,
+				Reason: "first-member override: " + firstMember,
 			}
+			firstMember = "" // consume, regardless of which path handles it
 		} else {
 			cosName := ""
 			if pod.ChiefOfStaff.Enabled {

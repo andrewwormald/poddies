@@ -16,6 +16,11 @@ import (
 // member file does not exist under the pod.
 var ErrMemberNotFound = errors.New("member not found")
 
+// ErrCoSNameCollision is returned when a member's name collides with
+// the pod's chief-of-staff name — that would make routing ambiguous
+// (the orchestrator would detour @member-name invocations to the CoS).
+var ErrCoSNameCollision = errors.New("member name collides with chief-of-staff name")
+
 // AddMember validates m and writes it to <root>/pods/<pod>/members/<name>.toml.
 // Errors if the pod does not exist or if a member with that name already exists.
 func AddMember(root, pod string, m config.Member) error {
@@ -24,6 +29,13 @@ func AddMember(root, pod string, m config.Member) error {
 	}
 	if err := m.Validate(); err != nil {
 		return fmt.Errorf("validate: %w", err)
+	}
+	podCfg, err := config.LoadPod(PodDir(root, pod))
+	if err != nil {
+		return fmt.Errorf("load pod: %w", err)
+	}
+	if podCfg.ChiefOfStaff.Enabled && m.Name == podCfg.ChiefOfStaff.ResolvedName() {
+		return fmt.Errorf("%w: %q is reserved by chief_of_staff.name", ErrCoSNameCollision, m.Name)
 	}
 	path := config.MemberPath(PodDir(root, pod), m.Name)
 	if _, err := os.Stat(path); err == nil {
