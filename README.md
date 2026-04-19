@@ -1,22 +1,66 @@
-# poddies
+<p align="center">
+  <img src="logo.png" alt="poddies — a pod of AI agents" width="320" />
+</p>
 
-A terminal UI for running a "pod" of AI agents as a shared,
-Slack-thread-style conversation. The human user is the pod lead /
-CEO; agents (Claude Code, Gemini CLI, etc.) are spawned as
-subprocesses, address each other by `@mention`, and respect a
-configurable hierarchy of roles.
+<h1 align="center">poddies</h1>
 
-poddies is **TUI-first** — think k9s for AI-agent pods. Launch the
-binary, the interface opens; pod / member / thread management all
-happens inside. There's a hidden scripting surface underneath (for CI,
-automation, test harnesses); see the bottom of this file.
+<p align="center">
+  A terminal UI for leading your pod of AI agents —<br/>
+  <em>k9s for agent-team orchestration.</em>
+</p>
 
-Status: early development.
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#inside-the-tui">TUI</a> ·
+  <a href="#chief-of-staff">Chief of Staff</a> ·
+  <a href="#sessions-and-resume">Sessions</a> ·
+  <a href="#architecture">Architecture</a>
+</p>
+
+---
+
+## What it is
+
+`poddies` lets you stand up a "pod" of AI agents — each with its own
+persona, model, and effort level — and converse with them as a team
+in a shared, Slack-thread-style chat. Claude Code, Gemini CLI, and
+other LLM backends are spawned as subprocesses and address each other
+by `@mention`. The human user is the pod lead — the CEO who kicks off
+a direction, reviews output, and occasionally asks "what do you
+think?" (`@sam thoughts?`).
+
+- **Terminal-first**: run `poddies` and the interface opens. No
+  subcommands, no config ceremony. Like `k9s` for `kubectl`,
+  day-to-day use happens inside the TUI.
+- **Backend-agnostic**: swap Claude for Gemini mid-roster by editing
+  a TOML file. Same pod, different agents.
+- **Session-scoped**: every launch is a clean room. `/resume` brings
+  back prior conversations; stale ones auto-clean after 30 days.
+- **Cost-aware**: tokens and dollars accrue in the footer so you see
+  exactly what a multi-agent brainstorm costs.
+
+## Why
+
+Dropping into a chat with a single agent is fine, but real work is
+rarely a one-voice affair. You want a backend engineer, a frontend
+engineer, and maybe a PM — each staying in their lane — discussing
+the task until there's a plan. `poddies` is the scaffolding for that
+conversation, plus a chief-of-staff agent that steps in when requests
+don't cleanly land on anyone's desk.
+
+---
 
 ## Install
 
 ```sh
 go install github.com/andrewwormald/poddies/cmd/poddies@latest
+```
+
+Add your Go bin to `PATH` if you haven't:
+
+```sh
+export PATH="$(go env GOPATH)/bin:$PATH"   # add to ~/.zshrc to persist
 ```
 
 Verify:
@@ -26,153 +70,261 @@ poddies --version
 poddies doctor
 ```
 
-`doctor` checks for `claude` and `gemini` on PATH and verifies your
-poddies root is writable. Adapters are optional — a missing CLI is a
-warning, not an error, so you can use only the backends you have.
+`doctor` confirms `claude` and `gemini` are on `PATH` and your root
+is writable. Both adapters are optional — a missing CLI is a warning,
+not an error, so you can use only the backends you have. A built-in
+`mock` adapter lets you exercise the whole flow without any real LLM.
 
-## Run it
+## Quickstart
 
 ```sh
 poddies
 ```
 
-That's it. On a fresh machine:
+That's it. First launch:
 
-1. A local `./poddies/` root is created.
-2. A default pod is scaffolded.
-3. The onboarding wizard fires so you can add your first member (name,
-   title, adapter, model, effort, persona — all via numbered choices
-   or free-text).
-4. You land in the chat view. Type a message, Enter to send.
+1. A hidden `./.poddies/` directory is scaffolded (like `.git`).
+2. A default pod is created.
+3. The onboarding wizard runs so you can add your first member
+   (name, title, adapter, model, effort, persona — via numbered
+   choices or free text).
+4. You land in the chat view. Type a message, hit Enter, the pod
+   runs.
+
+Each subsequent launch creates a **new session** — a blank canvas —
+so unrelated conversations don't contaminate each other or pad out
+agent context. Type `/resume` to pick up where you left off on a
+prior one.
+
+## What the TUI looks like
+
+```
+┌── poddies · demo ── session: 2026-04-19-143023 ── alice, bob ── lead: alice ──┐
+│                                                                              │
+│ [human] investigate the login bug                                            │
+│ [alice] @bob can you pull the repro while I read the auth code?              │
+│ [bob] found it — token refresh drops the csrf claim                          │
+│ [alice] patching the handler now, @bob can you write a regression test?      │
+│ [bob] done. ship it                                                          │
+│ [sam]  milestone: patch + test landed in 4 turns                             │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ > _                                                                          │
+│ stopped: quiescent (turns=5)   5 turns · 4,812 tokens · $0.0147              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
 ## Inside the TUI
 
-**Views** (k9s-style — press `:` then type a command):
+### Views (command palette)
 
-- `:thread` (default) — the chat conversation
-- `:members` — pod member roster
-- `:pods` — all pods under the root
-- `:threads` — all threads under the current pod
-- `:perms` — pending permission requests
-- `:doctor` — adapter + root health check
-- `:help` — keybindings + command list
-- `:quit` — exit
+Press `:` to open the palette, then type a view name:
 
-**Global keybindings:**
+| command   | view                                          |
+|-----------|-----------------------------------------------|
+| `:thread` | the chat conversation (default)               |
+| `:members`| roster of pod members                         |
+| `:pods`   | all pods under the root                       |
+| `:threads`| named threads under the current pod           |
+| `:perms`  | pending permission requests                   |
+| `:doctor` | adapter + root health check                   |
+| `:help`   | keybindings + command reference               |
+| `:quit`   | exit                                          |
 
-- `:` open the command palette
-- `?` open the help view
-- `Esc` back to `:thread` (or cancel a wizard)
-- `Ctrl-C` exit (cancels any in-flight loop)
+### Global keys
 
-**In the chat view** (slash commands):
+| key        | action                                       |
+|------------|----------------------------------------------|
+| `:`        | open palette                                 |
+| `?`        | open help                                    |
+| `Esc`      | back to `:thread` (or cancel a wizard)       |
+| `Ctrl-C`   | exit (cancels any in-flight loop)            |
 
-- `/add` run the member-add wizard
-- `/remove` pick a member and remove
-- `/edit` edit a member's field (title / adapter / model / effort / persona)
-- `/export` dump the pod as a portable TOML bundle into the transcript
-- `/help` · `/quit`
+### Slash commands (in the chat view)
 
-**When a loop halts with pending permission requests**, the chat view
-shows a yellow pane listing them with keybindings:
+| command                | action                                          |
+|------------------------|-------------------------------------------------|
+| `/add`                 | wizard to add a new member                      |
+| `/remove`              | pick a member and remove                        |
+| `/edit`                | edit a member's field (title/adapter/model/…)   |
+| `/export`              | dump the pod as a portable TOML bundle          |
+| `/resume`              | list recent sessions                            |
+| `/resume <id>`         | re-open a prior session (prefix matches)        |
+| `/new`                 | quit and start a fresh session                  |
+| `/help`, `/quit`       | ...as you'd expect                              |
+
+### Permissions
+
+When a loop halts with pending permission requests, a yellow pane
+appears above the input with keybindings:
 
 - `a` approve the oldest pending request
 - `d` deny the oldest
 - `A` / `D` approve / deny all pending at once
 
-## Chief of staff
+## Configure a pod
 
-Each pod can enable a built-in facilitator agent via
-`[chief_of_staff]` in `pod.toml`:
+Pods live under `.poddies/pods/<name>/`. Each member is a TOML file:
 
 ```toml
+# .poddies/pods/demo/members/alice.toml
+name    = "alice"
+title   = "Staff Engineer"
+adapter = "claude"        # claude | gemini | mock
+model   = "claude-opus-4-7"
+effort  = "high"          # low | medium | high
+persona = "Pragmatic, terse. Pushes back on over-engineering."
+skills  = ["go", "auth", "distributed-systems"]
+```
+
+Pod-level settings in `pod.toml`:
+
+```toml
+name = "demo"
+lead = "alice"            # "human" for a human-led pod
+
 [chief_of_staff]
-enabled = true
-name = "sam"
-adapter = "claude"
-model = "claude-haiku-4-5"
+enabled  = true
+name     = "sam"
+adapter  = "claude"
+model    = "claude-haiku-4-5"
 triggers = ["milestone", "unresolved_routing", "gray_area"]
 ```
 
-- `milestone` fires every N member turns (default 3) with a summary.
-- `unresolved_routing` fires once per run when routing halts, giving
-  the facilitator a chance to propose a next speaker.
-- `gray_area` fires when the human posts a message with no `@mention`.
-  The facilitator either routes via `@name` to a member who owns the
-  request, or answers it directly when no one does. Explicit human
-  `@mentions` suppress this — the facilitator stays out of the way
-  when you've told it who you want.
+## Chief of Staff
 
-The chief-of-staff is addressable via `@<name>` from members and the
-human when enabled — e.g. `@sam what do you think?`.
+Each pod can enable a built-in facilitator agent — think exec's
+chief-of-staff. It's addressable via `@<name>` and fires automatically
+on three kinds of triggers:
+
+- **`milestone`** — every N member turns (default 3), posts a concise
+  summary of what just happened.
+- **`unresolved_routing`** — when nobody's been `@mentioned` and the
+  lead is human, gives the CoS one shot to propose a next speaker.
+- **`gray_area`** — when the human posts a message with no `@mention`,
+  the CoS either routes it to a member who clearly owns the domain,
+  or answers it directly. If the human did `@mention` someone, the
+  trigger steps aside — your explicit intent wins.
+
+The CoS defaults to a cheap, fast model because it runs often.
+
+## Sessions and `/resume`
+
+Every launch creates a fresh session — a clean conversation, its own
+thread log, its own agent-side session IDs. This avoids the noise
+trap where a shared long-lived thread accumulates off-topic chatter
+that every future turn pays to re-process.
+
+Session IDs are `YYYY-MM-DD-HHMMSS-<hex>` — sortable and readable.
+They live at `.poddies/sessions/<id>/thread.jsonl` and are indexed in
+`.poddies/sessions.toml`.
+
+```
+/resume                # list recent sessions in the transcript
+/resume 2026-04-19     # prefix match — re-opens the matching session
+/new                   # drop this session, start a fresh one
+```
+
+Stale sessions (no edits in 30 days) get cleaned up asynchronously on
+each launch. Window is configurable per root.
+
+## Cost awareness
+
+The footer shows cumulative turns, tokens, and dollars for the
+current session. Each adapter invocation reports usage; Claude
+includes cache-hit counts too (so you see the benefit of prompt
+caching on repeated prefixes). Real-time burn rate means you catch an
+agent going on a rant before your budget does.
+
+```
+3 turns · 2,847 tokens (in 2,120 / out 727) · $0.0089
+```
 
 ## Scripting surface (hidden)
 
-The same CRUD the TUI drives is available as subcommands for
-automation. They're hidden from `--help` by default; pass
-`--help-scripting` to see them:
+Everything the TUI drives is available as subcommands for automation.
+Hidden from `--help` by default; reveal with:
 
 ```sh
 poddies --help-scripting
 ```
 
-Everything you'd expect:
+Common uses:
 
 ```sh
-poddies init --local
-poddies pod create demo
 poddies pod export demo --out bundle.toml
 poddies pod import bundle.toml --as team-beta --overwrite
+
 poddies member add --pod demo --name alice --title "Staff" \
   --adapter claude --model claude-opus-4-7 --effort high
 poddies member edit --pod demo --name alice --effort medium
-poddies member remove --pod demo --name alice
-poddies thread list --pod demo
+
 poddies thread show --pod demo default
-poddies thread show --pod demo default --json
-poddies thread resume default --message "follow-up"
-poddies thread permissions default
 poddies thread approve default <request-id>
-poddies thread deny default <request-id> --reason "..."
+
 poddies run --pod demo --message "@alice ship it"
 ```
 
-These are useful for CI pipelines and scripted bootstraps. The TUI
+These are useful in CI pipelines and scripted bootstraps. The TUI
 remains the intended day-to-day surface.
 
 ## Architecture
 
-- **Config** (`internal/config`): `pod.toml`, per-member TOML files,
-  portable bundle format, strict unknown-field rejection,
-  slug/reserved-name validation.
-- **Thread log** (`internal/thread`): append-only JSONL event log with
-  forward-compatible unknown event types, `@mention` parser,
-  deterministic test hooks, permission bookkeeping helpers.
-- **Adapter interface** (`internal/adapter`): one `Invoke(ctx, req)`
-  per turn; backend picks how to render the thread into its prompt
-  format. Built-in adapters: `claude` (one-shot + streaming),
-  `gemini`, `mock` (tests + demos). Shared subprocess plumbing lives
-  in `internal/adapter/cliproc`.
-- **Orchestrator** (`internal/orchestrator`): pure `Route`
-  next-speaker policy (`@mention` + human-routes-to-lead + halt);
-  `Loop` ties it together with milestone / unresolved_routing /
-  gray_area triggers for the chief-of-staff facilitator.
-- **TUI** (`internal/tui`): bubbletea app with multi-view command
-  palette, wizard abstraction for in-chat CRUD, streaming event
-  subscription via a self-re-arming `tea.Cmd`.
-- **CLI** (`internal/cli`): cobra wiring for everything above, with
-  injectable I/O and adapter lookup so the full stack is testable
-  without touching the user's filesystem or real CLIs.
+```
+┌──────────────────┐        ┌──────────────────┐
+│       TUI        │◄───────│   Orchestrator   │
+│   (bubbletea)    │        │                  │
+│                  │        │   Route ─ pure   │
+│  ┌────────────┐  │        │   Loop  ─ turns  │
+│  │ Palette    │  │        │   CoS   ─ hooks  │
+│  │ Wizards    │  │        └────────┬─────────┘
+│  │ Permissions│  │                 │
+│  │ Views      │  │        ┌────────▼─────────┐
+│  └────────────┘  │        │     Adapter      │
+└──────────────────┘        │                  │
+                            │  ┌──────────┐    │
+┌──────────────────┐        │  │  claude  │───►┐
+│     Session      │◄───────│  │  gemini  │    │
+│                  │        │  │   mock   │    │
+│  sessions.toml   │        │  └──────────┘    │
+│  sessions/<id>/  │        └──────────────────┘
+│    thread.jsonl  │                 │
+│    .meta.toml    │                 ▼
+└──────────────────┘          subprocess CLI
+                              (claude / gemini)
+```
+
+- **`internal/config`** — `pod.toml`, member TOMLs, bundle format,
+  strict-mode decoding, slug validation.
+- **`internal/thread`** — append-only JSONL log with forward-compatible
+  unknown event types, `@mention` parsing, permission helpers,
+  per-thread `meta.toml` for session IDs + token counters.
+- **`internal/adapter`** — one `Invoke(ctx, req)` per turn; backends
+  render the thread into their own prompt format. `claude` (one-shot
+  + streaming), `gemini`, `mock` (demos + tests). Shared subprocess
+  plumbing lives in `internal/adapter/cliproc`.
+- **`internal/orchestrator`** — pure `Route` next-speaker policy,
+  `Loop` with milestone + unresolved-routing + gray-area triggers,
+  rescue budget for the facilitator.
+- **`internal/session`** — per-launch session model, cleanup, legacy
+  root migration.
+- **`internal/tui`** — bubbletea app, command palette, wizard
+  abstraction, multi-view renderer, streaming event subscription.
+- **`internal/cli`** — cobra wiring; scripting commands hidden from
+  `--help` by default, revealable with `--help-scripting`.
 
 ## Testing
 
-Every function has direct unit tests. Golden-file tests cover config
-round-trip, JSONL log format, renderer output, and full E2E scenarios.
-Run the suite:
+Every exported function has direct unit tests. Golden-file tests
+cover config round-trip, JSONL log format, renderer output, and full
+end-to-end scenarios (init → pod → members → run → permissions →
+resume). 13 packages, race-enabled suite:
 
 ```sh
 go test ./... -race -count=1
 ```
+
+Roadmap: see [FEATURES.md](./FEATURES.md).
 
 ## License
 
