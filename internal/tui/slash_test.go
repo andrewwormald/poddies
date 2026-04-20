@@ -193,6 +193,115 @@ func TestWizard_Escape_Cancels(t *testing.T) {
 	}
 }
 
+// --- /resume tests ---
+
+func sessions() []SessionSummary {
+	return []SessionSummary{
+		{ID: "sess-001", Pod: "demo", TurnCount: 3, LastSpeaker: "alice", LastEditedAt: "2026-04-19T10:00:00Z", IsCurrent: true},
+		{ID: "sess-002", Pod: "demo", TurnCount: 1, LastSpeaker: "bob", LastEditedAt: "2026-04-18T09:00:00Z"},
+	}
+}
+
+func TestSlash_Resume_NotWired_Status(t *testing.T) {
+	m := NewModel(Options{PodName: "demo", StartLoop: okStartLoop}) // no OnListSessions
+	m, _ = submitString(m, "/resume")
+	if !strings.Contains(m.Status(), "not wired") {
+		t.Errorf("want 'not wired' status, got %q", m.Status())
+	}
+}
+
+func TestSlash_Resume_NoArg_NoSessions(t *testing.T) {
+	m := NewModel(Options{
+		PodName:        "demo",
+		StartLoop:      okStartLoop,
+		OnListSessions: func() []SessionSummary { return nil },
+	})
+	m, _ = submitString(m, "/resume")
+	if !strings.Contains(m.Status(), "no prior sessions") {
+		t.Errorf("want 'no prior sessions', got %q", m.Status())
+	}
+}
+
+func TestSlash_Resume_NoArg_ShowsList(t *testing.T) {
+	m := NewModel(Options{
+		PodName:        "demo",
+		StartLoop:      okStartLoop,
+		OnListSessions: sessions,
+	})
+	m, _ = submitString(m, "/resume")
+	// list should appear as a system event in the transcript
+	if len(m.Events()) == 0 {
+		t.Fatal("expected session list event appended to transcript")
+	}
+	body := m.Events()[len(m.Events())-1].Body
+	for _, want := range []string{"sess-001", "sess-002", "1.", "2."} {
+		if !strings.Contains(body, want) {
+			t.Errorf("list event missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestSlash_Resume_ByNumber_InvokesCallback(t *testing.T) {
+	resumed := ""
+	m := NewModel(Options{
+		PodName:         "demo",
+		StartLoop:       okStartLoop,
+		OnListSessions:  sessions,
+		OnResumeSession: func(id string) { resumed = id },
+	})
+	m, cmd := submitString(m, "/resume 2")
+	if resumed != "sess-002" {
+		t.Errorf("want sess-002 resumed, got %q", resumed)
+	}
+	if cmd == nil {
+		t.Error("expect tea.Quit cmd")
+	}
+	if m.CurrentState() != StateQuit {
+		t.Errorf("want StateQuit, got %v", m.CurrentState())
+	}
+}
+
+func TestSlash_Resume_ByID_InvokesCallback(t *testing.T) {
+	resumed := ""
+	m := NewModel(Options{
+		PodName:         "demo",
+		StartLoop:       okStartLoop,
+		OnListSessions:  sessions,
+		OnResumeSession: func(id string) { resumed = id },
+	})
+	m, cmd := submitString(m, "/resume sess-001")
+	if resumed != "sess-001" {
+		t.Errorf("want sess-001 resumed, got %q", resumed)
+	}
+	if cmd == nil || m.CurrentState() != StateQuit {
+		t.Error("expect quit after resume by ID")
+	}
+}
+
+func TestSlash_Resume_BadNumber_Status(t *testing.T) {
+	m := NewModel(Options{
+		PodName:        "demo",
+		StartLoop:      okStartLoop,
+		OnListSessions: sessions,
+	})
+	m, _ = submitString(m, "/resume 9")
+	if !strings.Contains(m.Status(), "out of range") {
+		t.Errorf("want 'out of range', got %q", m.Status())
+	}
+}
+
+func TestSlash_Resume_BadID_Status(t *testing.T) {
+	m := NewModel(Options{
+		PodName:        "demo",
+		StartLoop:      okStartLoop,
+		OnListSessions: sessions,
+	})
+	m, _ = submitString(m, "/resume no-such-session")
+	if !strings.Contains(m.Status(), "no session matching") {
+		t.Errorf("want 'no session matching', got %q", m.Status())
+	}
+}
+
 func TestView_Wizard_RendersQuestionAndChoices(t *testing.T) {
 	m := NewModel(Options{
 		PodName:     "demo",

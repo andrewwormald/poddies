@@ -86,15 +86,16 @@ every turn. Two work streams:
 
 ## Resume UX (partially done)
 
-### R1. `/resume` slash command
-- Backend plumbing: session IDs persist in `<thread>.meta.toml`;
-  Claude adapter consumes `PriorSessionID`. Adapter-side resume is
-  live this commit.
-- **Not yet**: in-TUI `/resume` slash command that re-opens the last
-  active thread (or lets the user pick from a list). For now, just
-  re-running `poddies` picks up the `default` thread with prior
-  session IDs intact — the token-saving side effect is real even
-  without the command.
+### R1. `/resume` slash command ✓
+- `/resume` with no arg renders a numbered session list as a system
+  event in the transcript; user picks with `/resume <n>` or
+  `/resume <id-prefix>`.
+- `/resume <n>` resolves by 1-based list position. `/resume <id>`
+  does ID or prefix match. Both paths call `OnResumeSession` and
+  `tea.Quit`; the launch wrapper restarts bound to that session.
+- `doResume()` helper deduplicates the quit/callback path.
+- 7 new unit tests cover: not-wired, no sessions, list display
+  (numbered), pick by number, pick by ID, out-of-range, bad ID.
 
 ### R2. Active thread tracking
 - Cross-run: which thread was the user in last session? Store in a

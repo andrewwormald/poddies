@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -107,10 +108,15 @@ func (m Model) cancelWizard() Model {
 	return m
 }
 
-// handleResume drives /resume. With no arg, lists recent sessions
-// into the transcript (system events). With an ID, invokes
-// OnResumeSession and tea.Quit — the launch wrapper restarts the TUI
-// bound to that session.
+// handleResume drives /resume.
+//
+//   - No arg: renders a numbered session list into the transcript and
+//     tells the user to pick with /resume 1, /resume 2, … or /resume <id>.
+//   - Numeric arg (1-based): resumes that list position.
+//   - String arg: ID or prefix match, same as before.
+//
+// In all resume cases the TUI quits so the launch wrapper can restart
+// it bound to the chosen session.
 func (m Model) handleResume(arg string) (tea.Model, tea.Cmd) {
 	if m.opts.OnListSessions == nil {
 		m.statusLine = "/resume is not wired in this TUI session"
@@ -123,44 +129,53 @@ func (m Model) handleResume(arg string) (tea.Model, tea.Cmd) {
 			return m, waitForSubMsg(m.sub)
 		}
 		var b strings.Builder
-		b.WriteString("recent sessions (type /resume <id>):\n")
-		for _, s := range list {
-			marker := "  "
-			if s.IsCurrent {
-				marker = "» "
+		b.WriteString("recent sessions (type /resume <n> or /resume <id>):\n")
+		for i, s := range list {
+			marker := "» " // current session marker
+			if !s.IsCurrent {
+				marker = "  "
 			}
 			last := s.LastSpeaker
 			if last == "" {
 				last = "-"
 			}
-			fmt.Fprintf(&b, "%s%s  pod=%s  turns=%d  last=%s  edited=%s\n",
-				marker, s.ID, s.Pod, s.TurnCount, last, s.LastEditedAt)
+			fmt.Fprintf(&b, "%s%d. %s  pod=%s  turns=%d  last=%s  edited=%s\n",
+				marker, i+1, s.ID, s.Pod, s.TurnCount, last, s.LastEditedAt)
 		}
 		m.events = append(m.events, resumePreview(b.String()))
 		if m.ready {
 			m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, m.viewport.Width))
 			m.viewport.GotoBottom()
 		}
-		m.statusLine = fmt.Sprintf("%d session(s) — pick one with /resume <id>", len(list))
+		m.statusLine = fmt.Sprintf("%d session(s) — pick one with /resume <n> or /resume <id>", len(list))
 		return m, waitForSubMsg(m.sub)
 	}
-	// User supplied an ID (or a prefix of one). Find the best match.
-	matched := ""
+	// Numeric pick: /resume 1 resumes list[0].
+	if idx, err := strconv.Atoi(arg); err == nil {
+		if idx < 1 || idx > len(list) {
+			m.statusLine = fmt.Sprintf("out of range: %d (1..%d)", idx, len(list))
+			return m, waitForSubMsg(m.sub)
+		}
+		return m.doResume(list[idx-1].ID)
+	}
+	// ID / prefix match.
 	for _, s := range list {
 		if s.ID == arg || strings.HasPrefix(s.ID, arg) {
-			matched = s.ID
-			break
+			return m.doResume(s.ID)
 		}
 	}
-	if matched == "" {
-		m.statusLine = "no session matching " + arg
-		return m, waitForSubMsg(m.sub)
-	}
+	m.statusLine = "no session matching " + arg
+	return m, waitForSubMsg(m.sub)
+}
+
+// doResume invokes OnResumeSession and quits the TUI so the launch
+// wrapper can restart bound to the chosen session.
+func (m Model) doResume(id string) (tea.Model, tea.Cmd) {
 	if m.opts.OnResumeSession == nil {
 		m.statusLine = "/resume is not wired (no callback)"
 		return m, waitForSubMsg(m.sub)
 	}
-	m.opts.OnResumeSession(matched)
+	m.opts.OnResumeSession(id)
 	if m.cancelLoop != nil {
 		m.cancelLoop()
 	}
