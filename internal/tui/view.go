@@ -98,8 +98,8 @@ func (m Model) renderHeader() string {
 		}
 		parts = append(parts, metaStyle.Render("session: "+short))
 	}
-	if len(m.opts.Members) > 0 {
-		parts = append(parts, metaStyle.Render("members: "+strings.Join(m.opts.Members, ", ")))
+	if roster := m.currentRoster(); len(roster) > 0 {
+		parts = append(parts, metaStyle.Render("members: "+strings.Join(roster, ", ")))
 	}
 	if m.opts.Lead != "" {
 		parts = append(parts, metaStyle.Render("lead: "+m.opts.Lead))
@@ -132,7 +132,7 @@ func (m Model) renderFooter() string {
 // accepts it.
 func (m Model) renderInputLine() string {
 	base := m.input.View()
-	ghost, ok := findMentionSuggestion(m.input.Value(), m.opts.Members, m.opts.CoSName)
+	ghost, ok := findMentionSuggestion(m.input.Value(), m.currentRoster(), m.opts.CoSName)
 	if !ok {
 		return base
 	}
