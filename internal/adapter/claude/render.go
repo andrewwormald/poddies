@@ -125,21 +125,34 @@ func RenderUserPrompt(member config.Member, events []thread.Event) string {
 	return b.String()
 }
 
+// maxBodyChars is the maximum number of characters rendered from any
+// single event body. Long tool outputs and messages are truncated to
+// keep the prompt bounded; the tail note tells the model what happened.
+const maxBodyChars = 600
+
+// truncBody caps s at maxBodyChars, appending a byte count note when cut.
+func truncBody(s string) string {
+	if len(s) <= maxBodyChars {
+		return s
+	}
+	return fmt.Sprintf("%s … [+%d chars]", s[:maxBodyChars], len(s)-maxBodyChars)
+}
+
 // renderEvent formats a single event into a transcript line. Unknown
 // event types are rendered as "[unknown:<type>]" so nothing is silently
 // dropped on the way into the prompt.
 func renderEvent(e thread.Event) string {
 	switch e.Type {
 	case thread.EventHuman:
-		return fmt.Sprintf("[human] %s\n", e.Body)
+		return fmt.Sprintf("[human] %s\n", truncBody(e.Body))
 	case thread.EventMessage:
 		from := e.From
 		if from == "" {
 			from = "?"
 		}
-		return fmt.Sprintf("[%s] %s\n", from, e.Body)
+		return fmt.Sprintf("[%s] %s\n", from, truncBody(e.Body))
 	case thread.EventSystem:
-		return fmt.Sprintf("[system] %s\n", e.Body)
+		return fmt.Sprintf("[system] %s\n", truncBody(e.Body))
 	case thread.EventPermissionRequest:
 		return fmt.Sprintf("[permission_request from %s] action=%s\n", e.From, e.Action)
 	case thread.EventPermissionGrant:
@@ -147,6 +160,6 @@ func renderEvent(e thread.Event) string {
 	case thread.EventPermissionDeny:
 		return fmt.Sprintf("[permission_deny by %s for %s]\n", e.From, e.RequestID)
 	default:
-		return fmt.Sprintf("[unknown:%s] %s\n", e.Type, e.Body)
+		return fmt.Sprintf("[unknown:%s] %s\n", e.Type, truncBody(e.Body))
 	}
 }

@@ -41,6 +41,20 @@ const DefaultMaxTurns = 8
 // negative (unlimited) value, to prevent runaway billing / CPU.
 const SafetyMaxTurns = 1000
 
+// DefaultContextWindow is the maximum number of thread events sent to a
+// member or CoS per invocation. Capping at a fixed window makes per-turn
+// cost O(1) rather than O(turns); the model still gets the most recent
+// context and the system prompt anchors its role and roster.
+const DefaultContextWindow = 30
+
+// tailEvents returns the last n events from s, or all of s if len(s) ≤ n.
+func tailEvents(s []thread.Event, n int) []thread.Event {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
+}
+
 // DefaultMilestoneEvery is the default number of member turns between
 // milestone firings of the chief-of-staff facilitator.
 const DefaultMilestoneEvery = 3
@@ -371,24 +385,19 @@ func (l *Loop) Run(ctx context.Context) (result LoopResult, err error) {
 			effort = l.EffortOverride
 		}
 
-		// Delta-resume: when this member has a prior server-side session,
-		// only send events since their last invocation. The adapter
-		// reconstructs prior context from --resume, so re-rendering the
-		// full thread is pure token waste and grows quadratically.
-		invokeThread := existing
-		if meta.LastSessionIDs[member.Name] != "" {
-			if from := meta.LastEventIdx[member.Name]; from > 0 && from <= len(existing) {
-				invokeThread = existing[from:]
-			}
-		}
+		// Sliding-window context: cap at DefaultContextWindow events so
+		// per-turn cost stays O(1) regardless of conversation length.
+		// We no longer use --resume / server-side session IDs for context
+		// reconstruction — accumulated tool-call results in prior sessions
+		// caused quadratic token growth.
+		invokeThread := tailEvents(existing, DefaultContextWindow)
 
 		resp, err := a.Invoke(ctx, adapter.InvokeRequest{
-			Role:           adapter.RoleMember,
-			Member:         *member,
-			Pod:            *pod,
-			Thread:         invokeThread,
-			Effort:         effort,
-			PriorSessionID: meta.LastSessionIDs[member.Name],
+			Role:    adapter.RoleMember,
+			Member:  *member,
+			Pod:     *pod,
+			Thread:  invokeThread,
+			Effort:  effort,
 		})
 		if err != nil {
 			return LoopResult{
@@ -550,22 +559,15 @@ func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events [
 	}
 	cosKey := cos.ResolvedName()
 
-	// Delta-resume: same logic as member invocations. CoS has its own
-	// server-side session so we only send the incremental events.
-	invokeThread := events
-	if meta.LastSessionIDs[cosKey] != "" {
-		if from := meta.LastEventIdx[cosKey]; from > 0 && from <= len(events) {
-			invokeThread = events[from:]
-		}
-	}
+	// Sliding-window context: same policy as member invocations.
+	invokeThread := tailEvents(events, DefaultContextWindow)
 
 	resp, err := a.Invoke(ctx, adapter.InvokeRequest{
-		Role:           adapter.RoleChiefOfStaff,
-		ChiefOfStaff:   cos,
-		Pod:            *pod,
-		Thread:         invokeThread,
-		Effort:         config.EffortLow,
-		PriorSessionID: meta.LastSessionIDs[cosKey],
+		Role:         adapter.RoleChiefOfStaff,
+		ChiefOfStaff: cos,
+		Pod:          *pod,
+		Thread:       invokeThread,
+		Effort:       config.EffortLow,
 	})
 	if err != nil {
 		return fmt.Errorf("invoke: %w", err)

@@ -113,6 +113,17 @@ func concisenessBlock() string {
 		"Every line is shared with the human lead and re-processed on every subsequent turn. Make it count.\n"
 }
 
+// maxBodyChars is the maximum characters rendered from any single event
+// body — mirrors the constant in the claude renderer.
+const maxBodyChars = 600
+
+func truncBody(s string) string {
+	if len(s) <= maxBodyChars {
+		return s
+	}
+	return fmt.Sprintf("%s … [+%d chars]", s[:maxBodyChars], len(s)-maxBodyChars)
+}
+
 // renderEvent formats a single event into a transcript line. Shares
 // the same vocabulary as the claude renderer for consistency but lives
 // in the gemini package so it can drift if Gemini ever needs different
@@ -120,15 +131,15 @@ func concisenessBlock() string {
 func renderEvent(e thread.Event) string {
 	switch e.Type {
 	case thread.EventHuman:
-		return fmt.Sprintf("[human] %s\n", e.Body)
+		return fmt.Sprintf("[human] %s\n", truncBody(e.Body))
 	case thread.EventMessage:
 		from := e.From
 		if from == "" {
 			from = "?"
 		}
-		return fmt.Sprintf("[%s] %s\n", from, e.Body)
+		return fmt.Sprintf("[%s] %s\n", from, truncBody(e.Body))
 	case thread.EventSystem:
-		return fmt.Sprintf("[system] %s\n", e.Body)
+		return fmt.Sprintf("[system] %s\n", truncBody(e.Body))
 	case thread.EventPermissionRequest:
 		return fmt.Sprintf("[permission_request from %s] action=%s\n", e.From, e.Action)
 	case thread.EventPermissionGrant:
@@ -136,6 +147,6 @@ func renderEvent(e thread.Event) string {
 	case thread.EventPermissionDeny:
 		return fmt.Sprintf("[permission_deny by %s for %s]\n", e.From, e.RequestID)
 	default:
-		return fmt.Sprintf("[unknown:%s] %s\n", e.Type, e.Body)
+		return fmt.Sprintf("[unknown:%s] %s\n", e.Type, truncBody(e.Body))
 	}
 }

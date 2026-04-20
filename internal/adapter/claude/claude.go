@@ -134,9 +134,10 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 	}
 
 	args := BuildArgs(model, systemPrompt)
-	if req.PriorSessionID != "" {
-		args = append(args, "--resume", req.PriorSessionID)
-	}
+	// No --resume: each invocation is a fresh session. Server-side
+	// session accumulation was the primary cause of quadratic token growth
+	// (tool results from prior turns reload on every subsequent turn).
+	// Context is reconstructed from the thread window in the user prompt.
 
 	stdout, stderr, err := a.Runner.Run(ctx, a.Binary, args, []byte(userPrompt))
 	if err != nil {
