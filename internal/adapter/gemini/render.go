@@ -67,21 +67,22 @@ func RenderPrompt(member config.Member, pod config.Pod, roster []config.Member, 
 
 	b.WriteString("---- SYSTEM ----\n")
 	fmt.Fprintf(&b, "You are %q, %s, in the %q pod.\n", member.Name, member.Title, pod.Name)
+	fmt.Fprintf(&b, "Your domain is strictly %s. Do not attempt work outside this role — route it.\n", member.Title)
 	if member.Persona != "" {
 		fmt.Fprintf(&b, "Persona: %s\n", member.Persona)
 	}
 	if len(roster) > 0 {
-		b.WriteString("Pod members:\n")
+		b.WriteString("Pod members (route to the right specialist):\n")
 		for _, m := range roster {
-			you := ""
-			if m.Name == member.Name {
-				you = " (you)"
+			you := " (you)"
+			if m.Name != member.Name {
+				you = ""
 			}
 			fmt.Fprintf(&b, "- %s: %s%s\n", m.Name, m.Title, you)
 		}
 	}
 	fmt.Fprintf(&b, "Lead: %s\n", pod.Lead)
-	b.WriteString("Conventions: use @name to address members.\n")
+	b.WriteString("Conventions: stay in your lane — if a request belongs to another member's role, route it immediately with @name; do not attempt it yourself.\n")
 	b.WriteString(concisenessBlock())
 	if member.SystemPromptExtra != "" {
 		b.WriteString(member.SystemPromptExtra)
