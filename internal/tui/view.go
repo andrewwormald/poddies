@@ -57,12 +57,13 @@ func (m Model) renderWizardModal() string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
+	choices := w.CurrentStepChoices()
 	b.WriteString(wrapText(step.Question, innerW))
 	b.WriteByte('\n')
-	for i, c := range step.Choices {
+	for i, c := range choices {
 		b.WriteString(fmt.Sprintf("  %d. %s\n", i+1, c))
 	}
-	if len(step.Choices) > 0 && step.AllowCustom {
+	if len(choices) > 0 && step.AllowCustom {
 		b.WriteString(metaStyle.Render("  (or type your own value)\n"))
 	}
 	if step.Optional {

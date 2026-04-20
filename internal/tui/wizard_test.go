@@ -313,6 +313,86 @@ func TestRenderWizardModal_EscCancelHint(t *testing.T) {
 	}
 }
 
+func TestWizard_ChoicesFn_UsedInsteadOfStaticChoices(t *testing.T) {
+	w := &Wizard{
+		Title: "dynamic",
+		Steps: []WizardStep{
+			{Question: "pick adapter", Choices: []string{"a", "b"}},
+			{
+				Question: "pick model",
+				ChoicesFn: func(answers []string) []string {
+					if len(answers) > 0 && answers[0] == "b" {
+						return []string{"b-model-1", "b-model-2"}
+					}
+					return []string{"a-model-1"}
+				},
+				AllowCustom: true,
+			},
+		},
+	}
+
+	// Pick "a" on step 1 → model list should have only a-model-1.
+	_, _ = w.Next("1") // picks "a"
+	choices := w.CurrentStepChoices()
+	if len(choices) != 1 || choices[0] != "a-model-1" {
+		t.Errorf("want [a-model-1], got %v", choices)
+	}
+}
+
+func TestWizard_ChoicesFn_RenderedInModal(t *testing.T) {
+	w := &Wizard{
+		Title: "dyn",
+		Steps: []WizardStep{
+			{
+				Question: "Model?",
+				ChoicesFn: func([]string) []string {
+					return []string{"fast-model", "slow-model"}
+				},
+			},
+		},
+	}
+	m := modelWithWizard(w)
+	out := m.View()
+	for _, want := range []string{"fast-model", "slow-model"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in modal view, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestAddMemberWizard_ModelChoices_Claude(t *testing.T) {
+	w := addMemberWizard(Options{OnAddMember: func(AddMemberSpec) error { return nil }})
+	// Advance past name, title, adapter (pick claude = "1").
+	_, _ = w.Next("alice")
+	_, _ = w.Next("Engineer")
+	_, _ = w.Next("1") // claude
+	choices := w.CurrentStepChoices()
+	for _, c := range choices {
+		if strings.HasPrefix(c, "gemini") {
+			t.Errorf("claude adapter should not show gemini model %q", c)
+		}
+	}
+	if len(choices) == 0 {
+		t.Error("expected at least one claude model choice")
+	}
+}
+
+func TestAddMemberWizard_ModelChoices_Gemini(t *testing.T) {
+	w := addMemberWizard(Options{OnAddMember: func(AddMemberSpec) error { return nil }})
+	_, _ = w.Next("alice")
+	_, _ = w.Next("Engineer")
+	_, _ = w.Next("2") // gemini
+	choices := w.CurrentStepChoices()
+	for _, c := range choices {
+		if strings.HasPrefix(c, "claude") {
+			t.Errorf("gemini adapter should not show claude model %q", c)
+		}
+	}
+	if len(choices) == 0 {
+		t.Error("expected at least one gemini model choice")
+	}
+}
+
 func TestTrimSpace_EdgeCases(t *testing.T) {
 	cases := map[string]string{
 		"":              "",

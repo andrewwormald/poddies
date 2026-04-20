@@ -35,8 +35,19 @@ func addMemberWizard(opts Options) *Wizard {
 				Choices:  []string{"claude", "gemini", "mock"},
 			},
 			{
-				Question:    "Model (type a number or your own):",
-				Choices:     []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5", "gemini-2.5-pro", "gemini-2.5-flash"},
+				Question: "Model (type a number or your own):",
+				ChoicesFn: func(answers []string) []string {
+					adapter := ""
+					if len(answers) > 2 {
+						adapter = answers[2]
+					}
+					switch adapter {
+					case "gemini":
+						return []string{"gemini-2.5-pro", "gemini-2.5-flash"}
+					default: // claude, mock, or anything else
+						return []string{"claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"}
+					}
+				},
 				AllowCustom: true,
 			},
 			{

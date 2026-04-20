@@ -38,6 +38,10 @@ type WizardStep struct {
 	// type a number to pick one, or type free text to provide a custom
 	// answer. When Choices is empty the step is free-text only.
 	Choices []string
+	// ChoicesFn, if set, overrides Choices with a dynamic list computed
+	// from answers collected so far. Useful when a step's options depend
+	// on a previous answer (e.g. model list filtered by adapter).
+	ChoicesFn func(answers []string) []string
 	// AllowCustom controls whether typed text that doesn't match a
 	// choice number is accepted. Ignored when Choices is empty (free
 	// text is always allowed). Default false — only numbered picks.
@@ -47,6 +51,19 @@ type WizardStep struct {
 	Validate func(string) error
 	// Optional makes the step skippable with an empty answer.
 	Optional bool
+}
+
+// CurrentStepChoices returns the resolved choices for the current step,
+// calling ChoicesFn with answers collected so far when present.
+func (w *Wizard) CurrentStepChoices() []string {
+	step := w.CurrentStep()
+	if step == nil {
+		return nil
+	}
+	if step.ChoicesFn != nil {
+		return step.ChoicesFn(w.answers)
+	}
+	return step.Choices
 }
 
 // CurrentStep returns the step the wizard is waiting on. Returns nil
@@ -80,7 +97,13 @@ func (w *Wizard) Next(raw string) (done bool, err error) {
 	if step == nil {
 		return true, nil
 	}
-	answer, err := resolveAnswer(*step, raw)
+	// Build a copy with dynamic choices resolved so resolveAnswer sees
+	// the correct list regardless of whether ChoicesFn is set.
+	resolved := *step
+	if resolved.ChoicesFn != nil {
+		resolved.Choices = resolved.ChoicesFn(w.answers)
+	}
+	answer, err := resolveAnswer(resolved, raw)
 	if err != nil {
 		return false, err
 	}
