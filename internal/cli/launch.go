@@ -48,9 +48,14 @@ func (a *App) launchTUI(ctx context.Context) error {
 	// disk scans before opening; 1-hour timeout per user spec.
 	a.startCleanupGoroutine(root)
 
-	// First iteration: always a fresh session. Resume loop iterates
-	// into whichever session the TUI asks for.
+	// First iteration: resume the last-active session for this pod if
+	// one is recorded (R2 active-thread tracking). Falls back to a fresh
+	// session when the state file is missing, the session was cleaned up,
+	// or /resume is directing us somewhere specific.
+	lastID, _ := session.LoadLastSession(root, pod) // best-effort; error → empty string
+
 	var resumeTo string
+	firstIteration := true
 	for {
 		var s session.Session
 		if resumeTo != "" {
@@ -58,11 +63,21 @@ func (a *App) launchTUI(ctx context.Context) error {
 				return fmt.Errorf("resume: %w", err)
 			}
 			resumeTo = ""
+		} else if firstIteration && lastID != "" {
+			// Try to reopen where we left off. If the session has since
+			// been cleaned up, fall through to create a new one silently.
+			if s, err = session.Find(root, lastID); err != nil {
+				s, err = session.Create(root, pod)
+				if err != nil {
+					return fmt.Errorf("create session: %w", err)
+				}
+			}
 		} else {
 			if s, err = session.Create(root, pod); err != nil {
 				return fmt.Errorf("create session: %w", err)
 			}
 		}
+		firstIteration = false
 		log := thread.Open(session.ThreadPath(root, s.ID))
 		if err := log.EnsureFile(); err != nil {
 			return err
@@ -71,6 +86,10 @@ func (a *App) launchTUI(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		// Persist the session we just closed so the next launch re-opens
+		// it automatically (R2 active-thread tracking). Best-effort — a
+		// save failure here is non-fatal.
+		_ = session.SaveLastSession(root, pod, s.ID)
 		if next == "" {
 			return nil
 		}

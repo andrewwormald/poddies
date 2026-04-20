@@ -104,9 +104,17 @@ every turn. Two work streams:
 - 7 new unit tests cover: not-wired, no sessions, list display
   (numbered), pick by number, pick by ID, out-of-range, bad ID.
 
-### R2. Active thread tracking
-- Cross-run: which thread was the user in last session? Store in a
-  pod-level state file so `poddies` re-opens where they left off.
+### R2. Active thread tracking ✓
+- `session.SaveLastSession(root, pod, id)` / `LoadLastSession` write
+  and read `<root>/state.toml` (`[last_session]` table keyed by pod
+  name). Atomic tmp+rename writes; missing file returns `("", nil)`.
+- `launchTUI` in `launch.go`: on first iteration, calls
+  `LoadLastSession` and tries `session.Find`; falls back silently to a
+  fresh session if the record is stale or the state file is absent.
+  After every TUI close, calls `SaveLastSession` so the next launch
+  picks up where the user left off.
+- 5 session unit tests: missing → empty, round-trip, update, multi-pod,
+  StatePath location.
 
 ### R3. `/stats` view
 - Full-screen view showing per-member + per-thread token burn,
