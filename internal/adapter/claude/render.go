@@ -36,6 +36,7 @@ func RenderChiefOfStaffSystemPrompt(cos config.ChiefOfStaff, pod config.Pod, ros
 	b.WriteString("\nConventions:\n")
 	b.WriteString("- Address a specific member with @name when that member clearly owns the request.\n")
 	b.WriteString(concisenessBlock())
+	b.WriteString(collaborationBlock())
 	return b.String()
 }
 
@@ -64,6 +65,7 @@ func RenderSystemPrompt(member config.Member, pod config.Pod, roster []config.Me
 	b.WriteString("- Stay in your lane. If a request belongs to another member's role, route it immediately with @name. Do not attempt it yourself.\n")
 	b.WriteString("- Use @name to hand off to a specific pod member.\n")
 	b.WriteString(concisenessBlock())
+	b.WriteString(collaborationBlock())
 	if member.SystemPromptExtra != "" {
 		b.WriteString("\n")
 		b.WriteString(member.SystemPromptExtra)
@@ -87,6 +89,90 @@ func concisenessBlock() string {
 		"- Every line is shared with the human lead and re-processed on every subsequent turn. Make it count.\n"
 }
 
+// collaborationBlock is appended to every member system prompt to make
+// multi-turn review/revise cycles explicit. Without this, agents assume
+// they should produce a final answer in one shot and may not push back
+// or request revisions from peers.
+func collaborationBlock() string {
+	return "\nCollaboration:\n" +
+		"- Multi-turn cycles are normal: produce work, another agent may review it and push back, you then revise.\n" +
+		"- When reviewing a peer's work, be specific about what needs to change and @mention them to request it.\n" +
+		"- When you've addressed feedback, @mention the reviewer so they can verify.\n" +
+		"- Don't self-declare work complete — the human lead approves final outcomes.\n"
+}
+
+// threadVerbatimN is the number of most-recent events rendered verbatim.
+// Older events are compressed into a per-speaker "last position" summary.
+const threadVerbatimN = 15
+
+// renderThreadContext builds the conversation body for a user prompt.
+// When the event list is longer than threadVerbatimN it compresses the
+// older half into a "last position per speaker" summary so the model
+// always has full situational awareness without ballooning the prompt.
+func renderThreadContext(events []thread.Event) string {
+	if len(events) == 0 {
+		return ""
+	}
+	if len(events) <= threadVerbatimN {
+		var b strings.Builder
+		for _, e := range events {
+			b.WriteString(renderEvent(e))
+		}
+		return b.String()
+	}
+
+	older := events[:len(events)-threadVerbatimN]
+	recent := events[len(events)-threadVerbatimN:]
+
+	var b strings.Builder
+	b.WriteString("[Earlier conversation — most recent position of each participant]\n")
+	b.WriteString(compressSpeakers(older))
+	b.WriteString("\n[Recent conversation]\n")
+	for _, e := range recent {
+		b.WriteString(renderEvent(e))
+	}
+	return b.String()
+}
+
+// compressSpeakers extracts the last message per speaker from events and
+// returns them in chronological order of last appearance. This gives
+// any agent reading the context a clear "where everyone stands" snapshot.
+func compressSpeakers(events []thread.Event) string {
+	type pos struct {
+		key  string
+		body string
+		idx  int
+	}
+	seen := map[string]*pos{}
+	var order []string
+
+	for i, e := range events {
+		var key, label, body string
+		switch e.Type {
+		case thread.EventHuman:
+			key, label, body = "human", "human", e.Body
+		case thread.EventMessage:
+			if e.From == "" {
+				continue
+			}
+			key, label, body = e.From, e.From, e.Body
+		default:
+			continue
+		}
+		if _, ok := seen[key]; !ok {
+			order = append(order, key)
+		}
+		seen[key] = &pos{key: label, body: truncBody(body), idx: i}
+	}
+
+	var b strings.Builder
+	for _, k := range order {
+		p := seen[k]
+		fmt.Fprintf(&b, "[%s] %s\n", p.key, p.body)
+	}
+	return b.String()
+}
+
 // RenderUserPromptForCoS is the CoS-flavored counterpart of
 // RenderUserPrompt. Uses the CoS name in the call-to-action so the
 // model doesn't get told "you are " (zero-value).
@@ -96,9 +182,7 @@ func RenderUserPromptForCoS(cos config.ChiefOfStaff, events []thread.Event) stri
 		b.WriteString("The thread is empty.\n")
 	} else {
 		b.WriteString("Conversation so far:\n\n")
-		for _, e := range events {
-			b.WriteString(renderEvent(e))
-		}
+		b.WriteString(renderThreadContext(events))
 		b.WriteString("\n")
 	}
 	fmt.Fprintf(&b, "You are %s, the chief-of-staff. Respond with your next message in the thread.\n", cos.ResolvedName())
@@ -115,9 +199,7 @@ func RenderUserPrompt(member config.Member, events []thread.Event) string {
 		b.WriteString("The thread is empty. Please start the conversation.\n")
 	} else {
 		b.WriteString("Conversation so far:\n\n")
-		for _, e := range events {
-			b.WriteString(renderEvent(e))
-		}
+		b.WriteString(renderThreadContext(events))
 		b.WriteString("\n")
 	}
 	fmt.Fprintf(&b, "You are %s. Respond with your next message in the thread.\n", member.Name)

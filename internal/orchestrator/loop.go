@@ -35,7 +35,7 @@ const (
 )
 
 // DefaultMaxTurns is used when Loop.MaxTurns is zero.
-const DefaultMaxTurns = 8
+const DefaultMaxTurns = 16
 
 // SafetyMaxTurns caps any loop even when MaxTurns is set to a large or
 // negative (unlimited) value, to prevent runaway billing / CPU.

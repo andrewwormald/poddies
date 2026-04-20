@@ -30,14 +30,13 @@ func RenderChiefOfStaffPrompt(cos config.ChiefOfStaff, pod config.Pod, roster []
 	fmt.Fprintf(&b, "Lead: %s\n", pod.Lead)
 	b.WriteString("Conventions: use @name to address a member when they clearly own the request; otherwise answer directly.\n")
 	b.WriteString(concisenessBlock())
+	b.WriteString(collaborationBlock())
 
 	b.WriteString("\n---- THREAD ----\n")
 	if len(events) == 0 {
 		b.WriteString("(empty)\n")
 	} else {
-		for _, e := range events {
-			b.WriteString(renderEvent(e))
-		}
+		b.WriteString(renderThreadContext(events))
 	}
 
 	b.WriteString("\n---- YOUR TURN ----\n")
@@ -84,6 +83,7 @@ func RenderPrompt(member config.Member, pod config.Pod, roster []config.Member, 
 	fmt.Fprintf(&b, "Lead: %s\n", pod.Lead)
 	b.WriteString("Conventions: stay in your lane — if a request belongs to another member's role, route it immediately with @name; do not attempt it yourself.\n")
 	b.WriteString(concisenessBlock())
+	b.WriteString(collaborationBlock())
 	if member.SystemPromptExtra != "" {
 		b.WriteString(member.SystemPromptExtra)
 		b.WriteString("\n")
@@ -93,9 +93,7 @@ func RenderPrompt(member config.Member, pod config.Pod, roster []config.Member, 
 	if len(events) == 0 {
 		b.WriteString("(empty)\n")
 	} else {
-		for _, e := range events {
-			b.WriteString(renderEvent(e))
-		}
+		b.WriteString(renderThreadContext(events))
 	}
 
 	b.WriteString("\n---- YOUR TURN ----\n")
@@ -111,6 +109,79 @@ func concisenessBlock() string {
 	return "Be concise: no preamble, no 'great question!' openers, no restating the human's ask.\n" +
 		"Stay in your persona's voice; don't narrate what you're about to do — just do it.\n" +
 		"Every line is shared with the human lead and re-processed on every subsequent turn. Make it count.\n"
+}
+
+// collaborationBlock makes multi-turn review/revise cycles explicit.
+func collaborationBlock() string {
+	return "\nCollaboration:\n" +
+		"- Multi-turn cycles are normal: produce work, another agent may review it and push back, you then revise.\n" +
+		"- When reviewing a peer's work, be specific about what needs to change and @mention them to request it.\n" +
+		"- When you've addressed feedback, @mention the reviewer so they can verify.\n" +
+		"- Don't self-declare work complete — the human lead approves final outcomes.\n"
+}
+
+// threadVerbatimN is the number of most-recent events rendered verbatim.
+const threadVerbatimN = 15
+
+// renderThreadContext builds the thread body for the THREAD section.
+// Events beyond threadVerbatimN are compressed into a per-speaker
+// last-position summary.
+func renderThreadContext(events []thread.Event) string {
+	if len(events) == 0 {
+		return ""
+	}
+	if len(events) <= threadVerbatimN {
+		var b strings.Builder
+		for _, e := range events {
+			b.WriteString(renderEvent(e))
+		}
+		return b.String()
+	}
+	older := events[:len(events)-threadVerbatimN]
+	recent := events[len(events)-threadVerbatimN:]
+	var b strings.Builder
+	b.WriteString("[Earlier conversation — most recent position of each participant]\n")
+	b.WriteString(compressSpeakers(older))
+	b.WriteString("\n[Recent conversation]\n")
+	for _, e := range recent {
+		b.WriteString(renderEvent(e))
+	}
+	return b.String()
+}
+
+// compressSpeakers extracts the last message per speaker from events.
+func compressSpeakers(events []thread.Event) string {
+	type pos struct {
+		key  string
+		body string
+		idx  int
+	}
+	seen := map[string]*pos{}
+	var order []string
+	for i, e := range events {
+		var key, label, body string
+		switch e.Type {
+		case thread.EventHuman:
+			key, label, body = "human", "human", e.Body
+		case thread.EventMessage:
+			if e.From == "" {
+				continue
+			}
+			key, label, body = e.From, e.From, e.Body
+		default:
+			continue
+		}
+		if _, ok := seen[key]; !ok {
+			order = append(order, key)
+		}
+		seen[key] = &pos{key: label, body: truncBody(body), idx: i}
+	}
+	var b strings.Builder
+	for _, k := range order {
+		p := seen[k]
+		fmt.Fprintf(&b, "[%s] %s\n", p.key, p.body)
+	}
+	return b.String()
 }
 
 // maxBodyChars is the maximum characters rendered from any single event
