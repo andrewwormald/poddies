@@ -13,14 +13,14 @@ every turn. Two work streams:
   — renders the full system prompt so repetition is visible without a
   live run. Primary audit tool.
 - Delta-only resume shipped as A2 ✓.
+- Prompt caching: Claude Code CLI manages cache headers internally;
+  `cache_read_input_tokens` captured in `ClaudeUsage` so hit rate is
+  observable. No further wiring needed from poddies side.
+- Roster de-dupe: investigated — roster appears only in system prompt,
+  not in the user-side CTA. No duplication.
 - Still open:
-  - Prompt caching: Claude adapter captures `cache_read_input_tokens`
-    — verify caching fires for the stable prefix (system prompt +
-    roster). Claude Code has `--cache-prompt`; Gemini TBD.
-  - Roster de-dupe: member roster currently appears in both system
-    prompt and user-side CTA — render once.
   - System prompt minification: trim boilerplate; move conventions to
-    CoS prompt only.
+    CoS prompt only. Low-priority; measure first with dump-prompt.
 
 ### A2. Delta-resume via session IDs ✓
 - `thread.Meta` gains `LastEventIdx map[string]int` (TOML-persisted).
