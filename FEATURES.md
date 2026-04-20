@@ -27,15 +27,22 @@ every turn. Two work streams:
   - System prompt minification: trim boilerplate; move conventions to
     the CoS prompt only.
 
-### A2. Delta-resume via session IDs
-- Plumbing landed in this commit: `thread.Meta` sidecar stores
-  per-member session IDs, Claude adapter passes `--resume`, loop
-  persists + loads on every run.
-- **Not yet**: render only the incremental events (since last turn
-  from this member) instead of the full thread. Needs care around
-  permission grants that rewrite state.
-- Add tests with a mock adapter that asserts the prompt size shrinks
-  after the first turn.
+### A2. Delta-resume via session IDs ✓
+- `thread.Meta` gains `LastEventIdx map[string]int` (TOML-persisted).
+  Tracks the exclusive-end event index at the time each member/CoS
+  last responded — the start of their next delta.
+- Orchestrator loop: before each member/CoS invocation, if
+  `LastSessionIDs[name] != ""`, passes `existing[LastEventIdx[name]:]`
+  instead of the full thread. Falls back to full thread when no prior
+  session (first run, or adapter doesn't return a SessionID).
+- After all emits for a turn, `LastEventIdx[name] = len(existing)` is
+  persisted so the next run picks up from the right place.
+- `mock.Call` gains `PriorSessionID` field so tests can assert the
+  session ID is threaded through correctly.
+- 2 orchestrator tests: delta shrinks thread on run 2 (with session ID);
+  full thread sent when no session ID (Gemini plain-stdout compat).
+- 2 thread/meta tests: LastEventIdx round-trips through TOML; LoadMeta
+  initialises the map when the sidecar is missing.
 
 ### A3. Conciseness prompting
 - Append a "be concise, stay in your persona, no preamble, no

@@ -28,6 +28,14 @@ type Meta struct {
 	// Used to pass `--resume <id>` on subsequent invocations.
 	LastSessionIDs map[string]string `toml:"last_session_ids,omitempty"`
 
+	// LastEventIdx maps member name → the exclusive-end index into the
+	// thread event slice at the time that member's response was last
+	// appended. On a subsequent invocation with a PriorSessionID set,
+	// only events from this index onwards are passed to the adapter
+	// (A2 delta-resume). Zero means "no prior invocation; send full
+	// thread." Only meaningful when a matching LastSessionIDs entry exists.
+	LastEventIdx map[string]int `toml:"last_event_idx,omitempty"`
+
 	// Cumulative token + cost counters for the thread. Updated after
 	// each successful adapter invocation.
 	InputTokens  int     `toml:"input_tokens,omitempty"`
@@ -54,7 +62,10 @@ func LoadMeta(logPath string) (*Meta, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return &Meta{LastSessionIDs: map[string]string{}}, nil
+			return &Meta{
+				LastSessionIDs: map[string]string{},
+				LastEventIdx:   map[string]int{},
+			}, nil
 		}
 		return nil, fmt.Errorf("read %q: %w", path, err)
 	}
@@ -65,6 +76,9 @@ func LoadMeta(logPath string) (*Meta, error) {
 	}
 	if m.LastSessionIDs == nil {
 		m.LastSessionIDs = map[string]string{}
+	}
+	if m.LastEventIdx == nil {
+		m.LastEventIdx = map[string]int{}
 	}
 	return &m, nil
 }

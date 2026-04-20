@@ -371,11 +371,22 @@ func (l *Loop) Run(ctx context.Context) (result LoopResult, err error) {
 			effort = l.EffortOverride
 		}
 
+		// Delta-resume: when this member has a prior server-side session,
+		// only send events since their last invocation. The adapter
+		// reconstructs prior context from --resume, so re-rendering the
+		// full thread is pure token waste and grows quadratically.
+		invokeThread := existing
+		if meta.LastSessionIDs[member.Name] != "" {
+			if from := meta.LastEventIdx[member.Name]; from > 0 && from <= len(existing) {
+				invokeThread = existing[from:]
+			}
+		}
+
 		resp, err := a.Invoke(ctx, adapter.InvokeRequest{
 			Role:           adapter.RoleMember,
 			Member:         *member,
 			Pod:            *pod,
-			Thread:         existing,
+			Thread:         invokeThread,
 			Effort:         effort,
 			PriorSessionID: meta.LastSessionIDs[member.Name],
 		})
@@ -431,6 +442,11 @@ func (l *Loop) Run(ctx context.Context) (result LoopResult, err error) {
 			}
 			emit(e)
 		}
+
+		// Record the delta index AFTER all emits so the next invocation
+		// starts from just past this member's own response.
+		meta.LastEventIdx[member.Name] = len(existing)
+		persistMeta()
 
 		turnsRun++
 		turnsSinceMilestone++
@@ -512,11 +528,21 @@ func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events [
 		return fmt.Errorf("resolve adapter %q: %w", cos.Adapter, err)
 	}
 	cosKey := cos.ResolvedName()
+
+	// Delta-resume: same logic as member invocations. CoS has its own
+	// server-side session so we only send the incremental events.
+	invokeThread := events
+	if meta.LastSessionIDs[cosKey] != "" {
+		if from := meta.LastEventIdx[cosKey]; from > 0 && from <= len(events) {
+			invokeThread = events[from:]
+		}
+	}
+
 	resp, err := a.Invoke(ctx, adapter.InvokeRequest{
 		Role:           adapter.RoleChiefOfStaff,
 		ChiefOfStaff:   cos,
 		Pod:            *pod,
-		Thread:         events,
+		Thread:         invokeThread,
 		Effort:         config.EffortLow,
 		PriorSessionID: meta.LastSessionIDs[cosKey],
 	})
@@ -525,6 +551,11 @@ func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events [
 	}
 	meta.RecordTurn(cosKey, resp.SessionID, resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.TotalCostUSD, resp.Usage.DurationMs)
 	*runUsage = runUsage.Add(resp.Usage)
+	// Record where the next CoS delta starts (before appending response).
+	if meta.LastEventIdx == nil {
+		meta.LastEventIdx = map[string]int{}
+	}
+	meta.LastEventIdx[cosKey] = len(events)
 	if saveErr := thread.SaveMeta(l.Log.Path, meta); saveErr != nil && l.OnEvent != nil {
 		l.OnEvent(thread.Event{Type: thread.EventSystem, Body: "warning: meta save failed: " + saveErr.Error()})
 	}
@@ -546,6 +577,13 @@ func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events [
 		return fmt.Errorf("append CoS event: %w", err)
 	}
 	emit(e)
+	// CoS response is now in the thread; advance the index so the next
+	// delta starts past it (the CoS's own message is already in its
+	// server-side session history via --resume).
+	meta.LastEventIdx[cosKey]++
+	if saveErr := thread.SaveMeta(l.Log.Path, meta); saveErr != nil && l.OnEvent != nil {
+		l.OnEvent(thread.Event{Type: thread.EventSystem, Body: "warning: meta save failed: " + saveErr.Error()})
+	}
 	return nil
 }
 

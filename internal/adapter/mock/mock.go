@@ -33,10 +33,11 @@ type ScriptedResponse struct {
 
 // Call records a single invocation for test-side assertion.
 type Call struct {
-	MemberName   string
-	Role         adapter.Role
-	ThreadLength int
-	Effort       string
+	MemberName     string
+	Role           adapter.Role
+	ThreadLength   int
+	Effort         string
+	PriorSessionID string
 }
 
 // Adapter is the mock adapter. It is NOT registered globally by default;
@@ -130,10 +131,11 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 				memberName = req.ChiefOfStaff.ResolvedName()
 			}
 			a.calls = append(a.calls, Call{
-				MemberName:   memberName,
-				Role:         req.Role,
-				ThreadLength: len(req.Thread),
-				Effort:       string(req.Effort),
+				MemberName:     memberName,
+				Role:           req.Role,
+				ThreadLength:   len(req.Thread),
+				Effort:         string(req.Effort),
+				PriorSessionID: req.PriorSessionID,
 			})
 			body := autoResponse(memberName, req.Thread)
 			// Synthesize plausible-looking token counts so the TUI's
@@ -174,10 +176,11 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 	}
 
 	a.calls = append(a.calls, Call{
-		MemberName:   memberName,
-		Role:         req.Role,
-		ThreadLength: len(req.Thread),
-		Effort:       string(req.Effort),
+		MemberName:     memberName,
+		Role:           req.Role,
+		ThreadLength:   len(req.Thread),
+		Effort:         string(req.Effort),
+		PriorSessionID: req.PriorSessionID,
 	})
 
 	resp := s.Response

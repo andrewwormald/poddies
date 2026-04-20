@@ -78,6 +78,36 @@ func TestMetaPath_AddsSuffix(t *testing.T) {
 	}
 }
 
+func TestSaveLoadMeta_LastEventIdx_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "t.jsonl")
+	want := &Meta{
+		LastSessionIDs: map[string]string{"alice": "sess-1"},
+		LastEventIdx:   map[string]int{"alice": 7, "bob": 3},
+		TurnCount:      5,
+	}
+	if err := SaveMeta(logPath, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadMeta(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastEventIdx["alice"] != 7 || got.LastEventIdx["bob"] != 3 {
+		t.Errorf("LastEventIdx round-trip failed: got %v", got.LastEventIdx)
+	}
+}
+
+func TestLoadMeta_Missing_LastEventIdx_InitialisedEmpty(t *testing.T) {
+	m, err := LoadMeta(filepath.Join(t.TempDir(), "nope.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.LastEventIdx == nil {
+		t.Error("LastEventIdx should be initialised to empty map")
+	}
+}
+
 func TestMeta_TotalTokens(t *testing.T) {
 	m := &Meta{InputTokens: 10, OutputTokens: 5}
 	if m.TotalTokens() != 15 {
