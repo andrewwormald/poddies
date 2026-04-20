@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -77,6 +78,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusLine = "welcome — let's add your first member"
 		m = m.activateWizard(onboardingAddMemberWizard(m.opts))
 		return m, waitForSubMsg(m.sub)
+	case animTickMsg:
+		return m.onAnimTick(msg)
 	case EventMsg:
 		return m.onEvent(msg)
 	case LoopDoneMsg:
@@ -87,6 +90,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForSubMsg(m.sub)
 	}
 	return m, nil
+}
+
+// chatWidth returns the width available to the chat viewport,
+// accounting for the viz panel when it is open.
+func (m Model) chatWidth() int {
+	if m.vizOpen {
+		w := m.width - vizPanelW - 1 // 1 for divider column
+		if w < 20 {
+			return 20
+		}
+		return w
+	}
+	return m.width
+}
+
+// recalcViewport resizes the viewport and re-renders the transcript to
+// match the current terminal width and viz-panel state. Call after
+// toggling vizOpen or when a WindowSizeMsg arrives.
+func (m Model) recalcViewport() Model {
+	w := m.chatWidth()
+	m.viewport.Width = w
+	m.input.Width = w - 4
+	m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, w))
+	return m
 }
 
 // onResize updates the viewport and input widths, caching dimensions
@@ -100,11 +127,9 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	if vpH < 3 {
 		vpH = 3
 	}
-	m.viewport.Width = msg.Width
 	m.viewport.Height = vpH
-	m.input.Width = msg.Width - 4
 	m.ready = true
-	m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, msg.Width))
+	m = m.recalcViewport()
 	m.viewport.GotoBottom()
 	return m, nil
 }
@@ -185,6 +210,18 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// in the chat would need Shift/etc. (future refinement if needed).
 	if m.state == StateIdle && msg.Type == tea.KeyRunes {
 		switch string(msg.Runes) {
+		case "v":
+			// Toggle the pod-visualization panel.
+			if m.view == ViewThread && m.input.Value() == "" {
+				m.vizOpen = !m.vizOpen
+				m = m.recalcViewport()
+				m.viewport.GotoBottom()
+				var tickCmd tea.Cmd
+				if m.vizOpen {
+					tickCmd = animTick()
+				}
+				return m, tea.Batch(waitForSubMsg(m.sub), tickCmd)
+			}
 		case ":":
 			if m.view != ViewThread || m.input.Value() == "" {
 				m = m.openPalette()
@@ -263,10 +300,59 @@ func (m Model) submit(text string) (tea.Model, tea.Cmd) {
 	return m, waitForSubMsg(m.sub)
 }
 
-// onEvent appends an event to the transcript and re-arms the
-// subscription.
+// onAnimTick advances the viz panel animation. Re-arms the tick while
+// the panel is open; prunes fully-expired links to bound slice growth.
+func (m Model) onAnimTick(msg animTickMsg) (tea.Model, tea.Cmd) {
+	if !m.vizOpen {
+		return m, nil // panel closed — let the tick die
+	}
+	now := msg.t
+	live := m.activeLinks[:0]
+	for _, l := range m.activeLinks {
+		if !l.expired(now) {
+			live = append(live, l)
+		}
+	}
+	m.activeLinks = live
+	return m, animTick()
+}
+
+// onEvent appends an event to the transcript, records a viz link for
+// the new speaker, and re-arms the subscription.
 func (m Model) onEvent(msg EventMsg) (tea.Model, tea.Cmd) {
-	m.events = append(m.events, msg.Event)
+	e := msg.Event
+	m.events = append(m.events, e)
+
+	// Track who spoke for viz animations.
+	switch e.Type {
+	case "message":
+		if e.From != "" && e.From != m.lastSpeaker {
+			m.activeLinks = append(m.activeLinks, vizLink{
+				from:    e.From,
+				to:      m.lastSpeaker, // "" = human, or previous member
+				startAt: time.Now(),
+			})
+		}
+		if e.From != "" {
+			m.lastSpeaker = e.From
+		}
+	case "human":
+		if m.lastSpeaker != "" {
+			m.activeLinks = append(m.activeLinks, vizLink{
+				from:    "",
+				to:      m.lastSpeaker,
+				startAt: time.Now(),
+			})
+		}
+		m.lastSpeaker = ""
+	}
+
+	// Keep the slice bounded; old links are pruned by onAnimTick when
+	// viz is open, but we clip here too so the model stays lean.
+	if len(m.activeLinks) > 32 {
+		m.activeLinks = m.activeLinks[len(m.activeLinks)-32:]
+	}
+
 	if m.ready {
 		m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, m.viewport.Width))
 		m.viewport.GotoBottom()

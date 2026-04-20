@@ -223,6 +223,11 @@ type Model struct {
 
 	// paletteInput is the text buffer while the : palette is open.
 	paletteInput string
+
+	// viz panel: toggle with 'v', shows animated member graph.
+	vizOpen     bool
+	activeLinks []vizLink // in-flight or recently-completed flows
+	lastSpeaker string    // "" = human; used to determine link direction
 }
 
 // NewModel constructs an initial Model. Callers typically hand it to

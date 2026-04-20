@@ -45,13 +45,24 @@ func (m Model) renderThreadView() string {
 	// When the thread is empty and members exist, replace the blank viewport
 	// with a short hint so the user knows what to do.
 	if len(m.events) == 0 && len(m.currentRoster()) > 0 && m.ready {
+		chatW := m.chatWidth()
 		hint := metaStyle.Render(
 			"  Type a message and press Enter to start the conversation.\n" +
 				"  Address a member with @name, or say anything and the pod routes it.\n" +
 				"  /add  to add more members   :help  for all commands",
 		)
-		body = lipgloss.Place(m.width, m.viewport.Height, lipgloss.Left, lipgloss.Center, hint)
+		body = lipgloss.Place(chatW, m.viewport.Height, lipgloss.Left, lipgloss.Center, hint)
 	}
+
+	if m.vizOpen {
+		// Build a thin divider column as tall as the viewport.
+		divLines := strings.Repeat("│\n", m.viewport.Height-1) + "│"
+		divider := metaStyle.Render(divLines)
+		viz := m.renderVizPanel(m.viewport.Height)
+		mid := lipgloss.JoinHorizontal(lipgloss.Top, body, divider, viz)
+		return lipgloss.JoinVertical(lipgloss.Top, header, mid, footer)
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Top, header, body, footer)
 }
 
