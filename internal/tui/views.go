@@ -36,7 +36,7 @@ func (m Model) renderThreadView() string {
 	if m.state == StatePalette {
 		footer = m.renderPaletteFooter()
 	} else if m.state == StatePrompting && m.wizard != nil {
-		footer = m.renderWizard()
+		return m.renderWizardModal()
 	} else {
 		footer = m.renderFooter()
 	}

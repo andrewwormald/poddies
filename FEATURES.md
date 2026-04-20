@@ -62,13 +62,14 @@ every turn. Two work streams:
 - Tab key: intercepted in `onKey` before the input update path; calls
   `applySuggestion` when a suggestion is active, otherwise falls through.
 
-### P2. Modal wizard rendering
-- Wizards currently replace the footer pane. User wants them rendered
-  as a **centered bordered box** over a dimmed background (think
-  Claude Code's setup prompts).
-- Implementation: `lipgloss.Place` + `lipgloss.NormalBorder`; build
-  the box contents (title · step N/M · question · choices · input ·
-  hint), center over the thread transcript (dimmed).
+### P2. Modal wizard rendering ✓
+- `renderWizardModal()` in `view.go` builds a bordered box
+  (lipgloss.NormalBorder, header-blue border foreground) with inner
+  content: title · step N/M · question · choices · input · hint.
+- `renderThreadView()` now `return`s the modal directly when
+  StatePrompting, bypassing the normal header+body+footer layout.
+- `lipgloss.Place(width, height, Center, Center, box)` centers the box
+  on the full terminal — no character-level overlay needed.
 
 ### P3. Per-user colors in transcript
 - Palette landed (`internal/tui/colors.go`): deterministic hash of

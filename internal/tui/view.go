@@ -25,20 +25,33 @@ func (m Model) View() string {
 	return m.renderActiveView()
 }
 
-// renderWizard replaces the footer pane when a wizard is active.
-func (m Model) renderWizard() string {
+// renderWizardModal renders the active wizard as a centered bordered
+// box over the full terminal, replacing the thread layout entirely.
+// This gives a distinct modal feel (vs. the old footer-replacement),
+// matches how Claude Code presents its setup prompts, and keeps the
+// wizard visually separate from the transcript.
+func (m Model) renderWizardModal() string {
 	w := m.wizard
 	step := w.CurrentStep()
 	if step == nil {
-		return m.renderFooter()
+		return m.renderFooter() // shouldn't happen; defensive
 	}
 	cur, total := w.Progress()
+
+	// Inner content width: total box width minus border (2) and padding (4).
+	totalW := m.width - 6
+	if totalW < 44 {
+		totalW = 44
+	}
+	if totalW > 72 {
+		totalW = 72
+	}
+	innerW := totalW - 6 // border(2) + padding(4)
+
 	var b strings.Builder
-	b.WriteString(metaStyle.Render(strings.Repeat("─", max(m.width, 20))))
-	b.WriteByte('\n')
 	b.WriteString(headerStyle.Render(fmt.Sprintf("%s · step %d/%d", w.Title, cur, total)))
-	b.WriteByte('\n')
-	b.WriteString(step.Question)
+	b.WriteString("\n\n")
+	b.WriteString(wrapText(step.Question, innerW))
 	b.WriteByte('\n')
 	for i, c := range step.Choices {
 		b.WriteString(fmt.Sprintf("  %d. %s\n", i+1, c))
@@ -49,10 +62,23 @@ func (m Model) renderWizard() string {
 	if step.Optional {
 		b.WriteString(metaStyle.Render("  (optional — press Enter to skip)\n"))
 	}
+	b.WriteString("\n")
 	b.WriteString(m.input.View())
-	b.WriteByte('\n')
-	b.WriteString(metaStyle.Render(m.statusLine + "   [Esc: cancel]"))
-	return b.String()
+	b.WriteString("\n\n")
+	status := m.statusLine
+	if m.lastErr != nil {
+		status = errStyle.Render(status)
+	}
+	b.WriteString(metaStyle.Render(status + "   [Esc: cancel]"))
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(1, 2).
+		Width(innerW).
+		Render(b.String())
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 func (m Model) renderHeader() string {

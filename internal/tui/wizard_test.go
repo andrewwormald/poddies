@@ -243,6 +243,76 @@ func TestResolveAnswer_TrimsWhitespace(t *testing.T) {
 	}
 }
 
+// --- modal rendering tests ---
+
+func modelWithWizard(w *Wizard) Model {
+	m := NewModel(Options{PodName: "demo", Members: []string{"alice"}})
+	m, _ = updateAs(m, sizeMsg())
+	m = m.activateWizard(w)
+	return m
+}
+
+func TestRenderWizardModal_ShowsTitleAndProgress(t *testing.T) {
+	w := &Wizard{
+		Title: "Add member",
+		Steps: []WizardStep{{Question: "Name?"}, {Question: "Adapter?"}},
+	}
+	m := modelWithWizard(w)
+	out := m.View()
+	for _, want := range []string{"Add member", "step 1/2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in modal view, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderWizardModal_ShowsQuestion(t *testing.T) {
+	w := &Wizard{
+		Title: "Setup",
+		Steps: []WizardStep{{Question: "What is your name?"}},
+	}
+	m := modelWithWizard(w)
+	out := m.View()
+	if !strings.Contains(out, "What is your name?") {
+		t.Errorf("question not in modal:\n%s", out)
+	}
+}
+
+func TestRenderWizardModal_ShowsChoices(t *testing.T) {
+	w := &Wizard{
+		Title: "Pick",
+		Steps: []WizardStep{{Question: "Adapter?", Choices: []string{"claude", "gemini"}}},
+	}
+	m := modelWithWizard(w)
+	out := m.View()
+	for _, want := range []string{"claude", "gemini", "1.", "2."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in choices, got:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderWizardModal_HasBorderedBox(t *testing.T) {
+	// NormalBorder emits corner chars (┌ ┐ └ ┘). The old footer-replacement
+	// approach only had a plain ─ divider. Corner chars confirm the modal
+	// bordered-box path is active.
+	w := &Wizard{Title: "T", Steps: []WizardStep{{Question: "Q?"}}}
+	m := modelWithWizard(w)
+	out := m.View()
+	if !strings.ContainsAny(out, "┌┐└┘") {
+		t.Errorf("expected NormalBorder corner chars in modal, got:\n%s", out)
+	}
+}
+
+func TestRenderWizardModal_EscCancelHint(t *testing.T) {
+	w := &Wizard{Title: "T", Steps: []WizardStep{{Question: "Q?"}}}
+	m := modelWithWizard(w)
+	out := m.View()
+	if !strings.Contains(out, "Esc") {
+		t.Errorf("expected [Esc: cancel] hint in modal:\n%s", out)
+	}
+}
+
 func TestTrimSpace_EdgeCases(t *testing.T) {
 	cases := map[string]string{
 		"":              "",

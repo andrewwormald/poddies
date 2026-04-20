@@ -1,0 +1,23 @@
+poddies · demo  members: alice, bob  lead: alice
+────────────────────────────────────────────────────────────────────────────────
+[human] kick off the investigation
+[alice] on it — reviewing now
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+> type a message, Enter to send, Ctrl-C to quit
+stopped: quiescent (turns=1)
