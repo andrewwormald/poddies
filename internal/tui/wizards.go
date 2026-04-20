@@ -128,6 +128,7 @@ func listRoster(opts Options) []string {
 func onboardingAddMemberWizard(opts Options) *Wizard {
 	base := addMemberWizard(opts)
 	base.Title = "onboarding · add member"
+	base.Preamble = "Welcome! Let's add your first agent.\n\nA pod is a team of AI agents — each has a name you @mention, a role, and a persona that shapes how it responds. Add 2–3 members for best results; you can /add more after."
 	originalComplete := base.OnComplete
 	base.OnComplete = func(answers []string) error {
 		if err := originalComplete(answers); err != nil {

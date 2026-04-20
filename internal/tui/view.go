@@ -50,7 +50,13 @@ func (m Model) renderWizardModal() string {
 
 	var b strings.Builder
 	b.WriteString(headerStyle.Render(fmt.Sprintf("%s · step %d/%d", w.Title, cur, total)))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	if w.Preamble != "" && cur == 1 {
+		b.WriteString("\n")
+		b.WriteString(metaStyle.Render(wrapText(w.Preamble, innerW)))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 	b.WriteString(wrapText(step.Question, innerW))
 	b.WriteByte('\n')
 	for i, c := range step.Choices {

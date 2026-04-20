@@ -15,6 +15,9 @@ import (
 // runs single-threaded through bubbletea's message loop.
 type Wizard struct {
 	Title string
+	// Preamble is shown above the first step question to orient the user.
+	// Leave empty for non-onboarding wizards where context is obvious.
+	Preamble string
 	Steps []WizardStep
 	// OnComplete runs when the user finishes the last step. answers[i]
 	// is the resolved answer for Steps[i] (after choice-number

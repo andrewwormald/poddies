@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/andrewwormald/poddies/internal/thread"
 )
 
 // dispatchSlashCommand routes /-prefixed input to the matching handler.
@@ -85,12 +87,16 @@ func (m Model) wizardSubmit(text string) (tea.Model, tea.Cmd) {
 		return m, waitForSubMsg(m.sub)
 	}
 	if done {
+		isOnboarding := strings.HasPrefix(m.wizard.Title, "onboarding")
 		if err := m.wizard.Complete(); err != nil {
 			m.lastErr = err
 			m.statusLine = "error: " + err.Error()
 		} else {
 			m.statusLine = m.wizard.Title + ": done"
 			m.lastErr = nil
+			if isOnboarding {
+				m = m.appendGuideEvent("Member added. Type a message below to start — address them with @name, or just say something and they'll route it. /add to add more members. :help for all commands.")
+			}
 		}
 		m.wizard = nil
 		m.state = StateIdle
@@ -242,6 +248,20 @@ func (m Model) selectCurrentThread() (tea.Model, tea.Cmd) {
 	}
 	// ThreadSummary.Name is the session/thread ID.
 	return m.doResume(threads[pos].Name)
+}
+
+// appendGuideEvent appends a system event with guidance text and refreshes
+// the viewport so the user sees it immediately.
+func (m Model) appendGuideEvent(msg string) Model {
+	m.events = append(m.events, thread.Event{
+		Type: thread.EventSystem,
+		Body: msg,
+	})
+	if m.ready {
+		m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, m.viewport.Width))
+		m.viewport.GotoBottom()
+	}
+	return m
 }
 
 // handleExport invokes OnExportPod and writes the resulting TOML bundle

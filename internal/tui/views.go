@@ -42,6 +42,16 @@ func (m Model) renderThreadView() string {
 	} else {
 		footer = m.renderFooter()
 	}
+	// When the thread is empty and members exist, replace the blank viewport
+	// with a short hint so the user knows what to do.
+	if len(m.events) == 0 && len(m.currentRoster()) > 0 && m.ready {
+		hint := metaStyle.Render(
+			"  Type a message and press Enter to start the conversation.\n" +
+				"  Address a member with @name, or say anything and the pod routes it.\n" +
+				"  /add  to add more members   :help  for all commands",
+		)
+		body = lipgloss.Place(m.width, m.viewport.Height, lipgloss.Left, lipgloss.Center, hint)
+	}
 	return lipgloss.JoinVertical(lipgloss.Top, header, body, footer)
 }
 
