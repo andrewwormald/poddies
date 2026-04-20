@@ -8,24 +8,19 @@ roughly by user impact.
 The conversation-through-a-thread model re-sends a lot of content on
 every turn. Two work streams:
 
-### A1. Audit for wasted repetition
-- Measure: log per-turn input-token counts for representative runs;
-  surface which chunks of the prompt are duplicated across turns
-  (persona re-emitted, full transcript re-rendered, roster repeated).
-- Quantify: baseline vs. post-refactor tokens/turn on a 5-turn mock
-  conversation.
-- Candidates to fix:
-  - Prompt caching: Claude adapter already captures `cache_read_input_tokens`
-    — verify caching actually fires for the stable prefix (system
-    prompt + roster). Claude Code has `--cache-prompt` flags; may
-    need to pass them. Similar for Gemini.
-  - Delta-only resume: once session IDs persist (A2), stop
-    re-rendering the whole thread into each Claude invocation and
-    send only the delta since last turn.
-  - Roster de-dupe: render the member roster once in the system
-    prompt; don't also enumerate it in the user-side CTA.
+### A1. Audit for wasted repetition (partially done)
+- `poddies dump-prompt <pod> <member>` lands in `internal/cli/run.go`
+  — renders the full system prompt so repetition is visible without a
+  live run. Primary audit tool.
+- Delta-only resume shipped as A2 ✓.
+- Still open:
+  - Prompt caching: Claude adapter captures `cache_read_input_tokens`
+    — verify caching fires for the stable prefix (system prompt +
+    roster). Claude Code has `--cache-prompt`; Gemini TBD.
+  - Roster de-dupe: member roster currently appears in both system
+    prompt and user-side CTA — render once.
   - System prompt minification: trim boilerplate; move conventions to
-    the CoS prompt only.
+    CoS prompt only.
 
 ### A2. Delta-resume via session IDs ✓
 - `thread.Meta` gains `LastEventIdx map[string]int` (TOML-persisted).
@@ -44,18 +39,15 @@ every turn. Two work streams:
 - 2 thread/meta tests: LastEventIdx round-trips through TOML; LoadMeta
   initialises the map when the sidecar is missing.
 
-### A3. Conciseness prompting
-- Append a "be concise, stay in your persona, no preamble, no
-  ceremonial acknowledgements" directive to every member system
-  prompt. Members that habitually open with "Great question!" or
-  repeat the user's ask back waste output tokens.
-- Configurable per-pod: a `[prompt_style]` section with fields like
-  `verbosity = "concise"` (default) vs `verbosity = "verbose"` for
-  debug. Default to concise.
-- CoS gets the same treatment — facilitator answers are summaries,
-  not essays.
-- Unit test: render the Claude system prompt, assert the conciseness
-  directive is present; snapshot-compare against a stable fixture.
+### A3. Conciseness prompting ✓
+- Conciseness directive appended to every member + CoS system prompt
+  in both Claude and Gemini adapters (`render.go` in each).
+- `internal/adapter/claude/conciseness_test.go` and
+  `internal/adapter/gemini/conciseness_test.go` assert the directive
+  is present; golden snapshots (`testdata/golden/render_full.txt`)
+  capture the full rendered prompt.
+- `poddies dump-prompt` CLI command (`internal/cli/run.go`) surfaces
+  the rendered prompt for a given pod member — primary A1 audit tool.
 
 ## TUI polish (carried over)
 
@@ -78,18 +70,18 @@ every turn. Two work streams:
 - `lipgloss.Place(width, height, Center, Center, box)` centers the box
   on the full terminal — no character-level overlay needed.
 
-### P3. Per-user colors in transcript
-- Palette landed (`internal/tui/colors.go`): deterministic hash of
-  name → palette color; reserved colors for `human` and the CoS.
-- **Not yet wired**: `renderEvent` in `view.go` still uses an
-  unstyled `[name]` prefix. Swap in `styledName(e.From, cosName)`.
+### P3. Per-user colors in transcript ✓
+- `internal/tui/colors.go`: deterministic hash of name → palette color;
+  reserved colors for `human` and the CoS.
+- `renderEvent` in `view.go` uses `styledName(e.From, cosName)` to
+  colour speaker prefixes; human events use `styledName("human", cosName)`.
 
-### P4. Text wrapping
-- Helper landed (`internal/tui/wrap.go`): `wrapText(s, width)`
-  word-wraps with hard-break fallback.
-- **Not yet wired**: transcript event bodies and wizard questions
-  still overflow long lines. Wrap at `m.viewport.Width` and
-  modal-box width respectively.
+### P4. Text wrapping ✓
+- `internal/tui/wrap.go`: `wrapText(s, width)` word-wraps with
+  hard-break fallback.
+- `renderEvent` wraps event bodies at `bodyWidth` (viewport width
+  minus name prefix); `renderWizardModal()` wraps wizard questions
+  at the inner box width.
 
 ## Resume UX (partially done)
 
