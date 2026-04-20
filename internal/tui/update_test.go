@@ -270,6 +270,71 @@ func TestRenderEvent_CoversAllTypes(t *testing.T) {
 	}
 }
 
+func TestUpdate_Tab_AcceptsSuggestion(t *testing.T) {
+	m := NewModel(Options{PodName: "demo", Members: []string{"alice", "bob"}, StartLoop: okStartLoop})
+	m, _ = updateAs(m, sizeMsg())
+	m.input.SetValue("@al")
+	m, _ = updateAs(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.input.Value() != "@alice " {
+		t.Errorf("want '@alice ' after Tab, got %q", m.input.Value())
+	}
+}
+
+func TestUpdate_Tab_NoSuggestion_InputUnchanged(t *testing.T) {
+	m := NewModel(Options{PodName: "demo", Members: []string{"alice"}, StartLoop: okStartLoop})
+	m, _ = updateAs(m, sizeMsg())
+	m.input.SetValue("hello")
+	m, _ = updateAs(m, tea.KeyMsg{Type: tea.KeyTab})
+	// no crash; input is unchanged (Tab passes through with no suggestion)
+	if m.input.Value() != "hello" {
+		t.Errorf("want input unchanged when no suggestion, got %q", m.input.Value())
+	}
+}
+
+func TestUpdate_Tab_WhileRunning_NoAccept(t *testing.T) {
+	m := NewModel(Options{PodName: "demo", Members: []string{"alice"}, StartLoop: okStartLoop})
+	m, _ = updateAs(m, sizeMsg())
+	m.state = StateRunning
+	m.input.SetValue("@al")
+	m, _ = updateAs(m, tea.KeyMsg{Type: tea.KeyTab})
+	// should NOT accept while running (input routes to viewport)
+	if m.input.Value() != "@al" {
+		t.Errorf("want input unchanged while running, got %q", m.input.Value())
+	}
+}
+
+func TestRenderInputLine_GhostText_Present(t *testing.T) {
+	m := NewModel(Options{PodName: "demo", Members: []string{"alice"}, StartLoop: okStartLoop})
+	m, _ = updateAs(m, sizeMsg())
+	m.input.SetValue("@al")
+	rendered := m.renderInputLine()
+	if !strings.Contains(rendered, "ice") {
+		t.Errorf("want ghost suffix 'ice' in rendered input, got:\n%s", rendered)
+	}
+}
+
+func TestRenderInputLine_NoGhost_WhenNoSuggestion(t *testing.T) {
+	m := NewModel(Options{PodName: "demo", Members: []string{"alice"}, StartLoop: okStartLoop})
+	m, _ = updateAs(m, sizeMsg())
+	m.input.SetValue("hello")
+	base := m.input.View()
+	rendered := m.renderInputLine()
+	if rendered != base {
+		t.Errorf("want renderInputLine == input.View() when no suggestion\ngot:  %q\nwant: %q", rendered, base)
+	}
+}
+
+func TestRenderInputLine_NoGhost_WhenNoMembers(t *testing.T) {
+	m := NewModel(Options{PodName: "demo"})
+	m, _ = updateAs(m, sizeMsg())
+	m.input.SetValue("@al")
+	base := m.input.View()
+	rendered := m.renderInputLine()
+	if rendered != base {
+		t.Errorf("want no ghost when roster is empty, got %q", rendered)
+	}
+}
+
 // --- helpers ---
 
 func updateAs(m Model, msg tea.Msg) (Model, tea.Cmd) {

@@ -88,9 +88,22 @@ func (m Model) renderFooter() string {
 	}
 	pane := renderPermissionsPane(m.pendingRequests, m.width)
 	if pane != "" {
-		return pane + "\n" + divider + "\n" + m.input.View() + "\n" + metaStyle.Render(status)
+		return pane + "\n" + divider + "\n" + m.renderInputLine() + "\n" + metaStyle.Render(status)
 	}
-	return divider + "\n" + m.input.View() + "\n" + metaStyle.Render(status)
+	return divider + "\n" + m.renderInputLine() + "\n" + metaStyle.Render(status)
+}
+
+// renderInputLine returns the input view with a faint ghost-text suffix
+// appended when an @mention suggestion is active. The ghost appears
+// immediately after the cursor, giving the user a preview before Tab
+// accepts it.
+func (m Model) renderInputLine() string {
+	base := m.input.View()
+	ghost, ok := findMentionSuggestion(m.input.Value(), m.opts.Members, m.opts.CoSName)
+	if !ok {
+		return base
+	}
+	return base + lipgloss.NewStyle().Faint(true).Render(ghost)
 }
 
 // renderUsage formats the cumulative token counter for the footer.

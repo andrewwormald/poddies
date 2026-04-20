@@ -135,6 +135,13 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusLine = ""
 			return m, waitForSubMsg(m.sub)
 		}
+	case tea.KeyTab:
+		if m.state == StateIdle && m.view == ViewThread {
+			if _, ok := findMentionSuggestion(m.input.Value(), m.opts.Members, m.opts.CoSName); ok {
+				m.input.SetValue(applySuggestion(m.input.Value(), m.opts.Members, m.opts.CoSName))
+				return m, waitForSubMsg(m.sub)
+			}
+		}
 	case tea.KeyEnter:
 		if m.state == StatePrompting {
 			text := m.input.Value()

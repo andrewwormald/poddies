@@ -52,13 +52,15 @@ every turn. Two work streams:
 
 ## TUI polish (carried over)
 
-### P1. Ghost-text @mention autocomplete
-- Logic landed (`internal/tui/autocomplete.go` + tests): detects `@xxx`
-  prefix, computes suggestion, `applySuggestion` accepts it.
-- **Not yet wired**: Rendering the suggestion as faint/0.5-opacity
-  ghost text inline in the input. Needs a custom input renderer
-  because `bubbles/textinput` owns its own View(). Tab key should
-  accept the suggestion.
+### P1. Ghost-text @mention autocomplete ✓
+- Logic: `internal/tui/autocomplete.go` — detects `@xxx` prefix,
+  computes suggestion, `applySuggestion` accepts it.
+- Rendering: `renderInputLine()` in `view.go` appends the ghost suffix
+  (faint style) after `m.input.View()`, which places it right after
+  the cursor. No custom renderer needed — the textinput cursor sits
+  naturally between typed text and ghost.
+- Tab key: intercepted in `onKey` before the input update path; calls
+  `applySuggestion` when a suggestion is active, otherwise falls through.
 
 ### P2. Modal wizard rendering
 - Wizards currently replace the footer pane. User wants them rendered
