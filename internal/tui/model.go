@@ -48,6 +48,8 @@ const (
 	ViewDoctor
 	// ViewHelp is the help overlay.
 	ViewHelp
+	// ViewStats is the token / cost drill-down view (R3).
+	ViewStats
 )
 
 // StartLoopFn starts an orchestrator loop with the given kickoff

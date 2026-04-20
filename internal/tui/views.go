@@ -24,6 +24,8 @@ func (m Model) renderActiveView() string {
 		return m.renderDoctorView()
 	case ViewHelp:
 		return m.renderHelpView()
+	case ViewStats:
+		return m.renderStatsView()
 	default:
 		return m.renderThreadView()
 	}
@@ -184,6 +186,48 @@ func (m Model) renderHelpView() string {
     Ctrl-C  quit (also cancels an in-flight loop)
 `
 	return m.renderViewFrame(":help", body)
+}
+
+func (m Model) renderStatsView() string {
+	var b strings.Builder
+
+	// Thread totals section.
+	b.WriteString("\n  Thread totals\n")
+	b.WriteString(metaStyle.Render("  " + strings.Repeat("─", 36)) + "\n")
+	if m.opts.OnUsageSnapshot != nil {
+		snap := m.opts.OnUsageSnapshot()
+		fmt.Fprintf(&b, "  input tokens   %d\n", snap.InputTokens)
+		fmt.Fprintf(&b, "  output tokens  %d\n", snap.OutputTokens)
+		fmt.Fprintf(&b, "  cost USD       %.4f\n", snap.CostUSD)
+		fmt.Fprintf(&b, "  turns          %d\n", snap.TurnCount)
+	} else {
+		b.WriteString(metaStyle.Render("  (stats not wired — OnUsageSnapshot is nil)") + "\n")
+	}
+
+	// Per-member message counts derived from in-session events.
+	counts := map[string]int{}
+	humanCount := 0
+	for _, e := range m.events {
+		switch e.Type {
+		case "message":
+			if e.From != "" {
+				counts[e.From]++
+			}
+		case "human":
+			humanCount++
+		}
+	}
+
+	b.WriteString("\n  Message counts (this session)\n")
+	b.WriteString(metaStyle.Render("  "+strings.Repeat("─", 36)) + "\n")
+	for name, n := range counts {
+		fmt.Fprintf(&b, "  %-20s %d\n", name, n)
+	}
+	if humanCount > 0 || len(counts) == 0 {
+		fmt.Fprintf(&b, "  %-20s %d\n", "human", humanCount)
+	}
+
+	return m.renderViewFrame(":stats", b.String())
 }
 
 // currentRoster returns the member names for the :members view,

@@ -36,6 +36,8 @@ func (m Model) dispatchSlashCommand(raw string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "resume":
 		return m.handleResume(arg)
+	case "stats":
+		m.view = ViewStats
 	case "add":
 		m = m.activateWizard(addMemberWizard(m.opts))
 	case "remove":

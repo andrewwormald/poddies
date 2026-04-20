@@ -19,6 +19,7 @@ var paletteCommands = map[string]View{
 	"doctor":  ViewDoctor,
 	"help":    ViewHelp,
 	"?":       ViewHelp,
+	"stats":   ViewStats,
 }
 
 // openPalette enters palette mode, clearing any prior input.

@@ -116,10 +116,15 @@ every turn. Two work streams:
 - 5 session unit tests: missing → empty, round-trip, update, multi-pod,
   StatePath location.
 
-### R3. `/stats` view
-- Full-screen view showing per-member + per-thread token burn,
-  costs, turn counts over time. The footer counter is the
-  at-a-glance version; `/stats` is the drill-down.
+### R3. `/stats` view ✓
+- `/stats` slash command and `:stats` palette entry switch to `ViewStats`.
+- `renderStatsView()` in `views.go`: thread totals block (input tokens,
+  output tokens, cost USD, turn count) from `OnUsageSnapshot`; per-member
+  message counts and human-message count derived from in-session events.
+- Graceful when `OnUsageSnapshot` is nil — shows a note instead of
+  crashing.
+- 5 unit tests in `stats_test.go` cover: view switch, totals rendering,
+  member-name rendering, human message count, not-wired fallback.
 
 ## Deferred
 
