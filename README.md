@@ -12,6 +12,7 @@
 <p align="center">
   <a href="#install">Install</a> ·
   <a href="#quickstart">Quickstart</a> ·
+  <a href="#create-a-pod">Create a pod</a> ·
   <a href="#inside-the-tui">TUI</a> ·
   <a href="#chief-of-staff">Chief of Staff</a> ·
   <a href="#sessions-and-resume">Sessions</a> ·
@@ -95,6 +96,46 @@ Each subsequent launch creates a **new session** — a blank canvas —
 so unrelated conversations don't contaminate each other or pad out
 agent context. Type `/resume` to pick up where you left off on a
 prior one.
+
+## Create a pod
+
+The wizard asks six questions. Here's what each one means:
+
+| Field | What it is | Example |
+|-------|-----------|---------|
+| **Name** | Slug used in `@mentions` — lowercase, no spaces | `alice` |
+| **Title** | Human-readable role, shown in the header | `Staff Engineer` |
+| **Adapter** | Which LLM backend to use | `claude` / `gemini` / `mock` |
+| **Model** | Specific model ID for this member | `claude-sonnet-4-6` |
+| **Effort** | How hard the model thinks (`low` = fast/cheap, `high` = thorough) | `medium` |
+| **Persona** | 1–2 sentences describing personality and approach | `Terse. Pushes back on over-engineering. Writes Go.` |
+
+**Persona is the most important field.** It's what keeps members in their lane and stops them all giving the same answer. Leave it blank on first try — you can `/edit` it once you've seen how the member behaves.
+
+After the first member is added you land in the chat. Add more with `/add`:
+
+```
+/add          # launch the add-member wizard again
+/add          # repeat for each member you want
+```
+
+**A useful starting pod (3 members):**
+
+```
+alice  — Staff Engineer    claude-sonnet-4-6  high    "Go specialist. Direct. No filler."
+bob    — Product Manager   claude-haiku-4-5   medium  "Keeps scope tight. Asks why before how."
+sage   — CoS (built-in)   claude-haiku-4-5   low     (auto-configured — see Chief of Staff)
+```
+
+Once you have two or more members you can kick off a conversation:
+
+```
+investigate the login bug         # everyone weighs in
+@alice what's your take on this?  # address one member directly
+@sage thoughts?                   # ask the CoS to summarise
+```
+
+To edit a member later: `/edit`. To see the roster: `:members`.
 
 ## What the TUI looks like
 
