@@ -135,6 +135,18 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.statusLine = ""
 			return m, waitForSubMsg(m.sub)
 		}
+	case tea.KeyUp:
+		if m.state == StateIdle && (m.view == ViewPods || m.view == ViewThreads) {
+			if m.cursorPos > 0 {
+				m.cursorPos--
+			}
+			return m, waitForSubMsg(m.sub)
+		}
+	case tea.KeyDown:
+		if m.state == StateIdle && (m.view == ViewPods || m.view == ViewThreads) {
+			m.cursorPos = m.cursorPos + 1 // clamped in view render
+			return m, waitForSubMsg(m.sub)
+		}
 	case tea.KeyTab:
 		if m.state == StateIdle && m.view == ViewThread {
 			if _, ok := findMentionSuggestion(m.input.Value(), m.opts.Members, m.opts.CoSName); ok {
@@ -143,6 +155,14 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case tea.KeyEnter:
+		// In :pods view, Enter switches to the highlighted pod.
+		if m.state == StateIdle && m.view == ViewPods {
+			return m.selectCurrentPod()
+		}
+		// In :threads view, Enter resumes the highlighted thread (session).
+		if m.state == StateIdle && m.view == ViewThreads {
+			return m.selectCurrentThread()
+		}
 		if m.state == StatePrompting {
 			text := m.input.Value()
 			m.input.SetValue("")

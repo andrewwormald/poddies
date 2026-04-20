@@ -118,23 +118,45 @@ every turn. Two work streams:
 - 5 unit tests in `stats_test.go` cover: view switch, totals rendering,
   member-name rendering, human message count, not-wired fallback.
 
-## Deferred
+## Deferred (now shipped)
 
-- **Pod / thread switching inside TUI**: right now switching pods or
-  threads means quitting and relaunching with `POD=...` env or the
-  scripting CLI. Plumb through a Backend interface so `:pods` and
-  `:threads` views can switch in place.
-- **CoS name @-mention UI affordance**: when typing `@` the CoS name
-  should appear in the autocomplete list alongside members (logic
-  supports this; rendering follows P1).
-- **Agent tool-use event types**: current thread event schema is
-  message / human / system / permission_{request,grant,deny}. When
-  Claude Code internally runs tools (bash, edit), those don't surface
-  in the poddies log. Worth a new event type + adapter hook so tool
-  activity is visible.
-- **Cross-machine resume**: `.meta.toml` is local. Adapters' session
-  IDs are server-side; resume works cross-machine as long as the
-  poddies root is synced (e.g. in Dropbox / git). Document this.
+### Pod / thread switching inside TUI ✓
+- `:pods` and `:threads` views gain cursor navigation (↑↓ arrow keys)
+  and Enter to switch. Cursor state lives in `Model.cursorPos`; reset
+  to 0 on each view change.
+- `:pods` Enter: `selectCurrentPod()` → `doSwitchPod(name)` records
+  `switchPodTarget` and quits. `launchTUI` detects the pod name,
+  resets `pod` and resumes from the last-active session for the new pod.
+- `:threads` Enter: `selectCurrentThread()` → `doResume(sessionID)` —
+  reuses the existing resume machinery; no new callbacks needed.
+- `launchTUIWithSession` returns a `launchResult` struct instead of a
+  plain string, distinguishing resume vs. pod-switch vs. quit.
+- `Options.OnSwitchPod func(name string)` wired from `launchTUIWithSession`.
+- 12 unit tests in `switch_test.go`.
+
+### CoS name @-mention UI affordance ✓
+- Already fully wired in the prior P1 commit.
+  `findMentionSuggestion` / `applySuggestion` both accept `cosName`
+  and call `mentionCandidates(members, cosName)` — CoS appears in the
+  autocomplete list alongside regular members. `view.go` and `update.go`
+  both pass `m.opts.CoSName`.
+
+### Agent tool-use event types ✓
+- `EventToolUse EventType = "tool_use"` added to `thread/event.go`;
+  `Action` = tool name, `Body` = input summary, `From` = member name.
+- Claude streaming adapter captures `tool_use` content blocks from
+  `assistant` messages; truncates input to 200 bytes + "…".
+- `InvokeResponse.ToolCalls []ToolCall` carries them to the orchestrator.
+- Orchestrator emits `EventToolUse` events before `EventMessage` for
+  both member and CoS turns.
+- TUI renders tool-use events as `[tool:name] input` in metaStyle.
+- 4 streaming tests + 2 event validation tests.
+
+### Cross-machine resume ✓
+- Documented in `README.md` (Sessions and /resume → Cross-machine
+  resume section). Thread logs + `.meta.toml` travel with the `.poddies/`
+  sync; Claude server-side sessions are addressed by ID and work from
+  any machine.
 
 ## Already shipped recently (for reference)
 

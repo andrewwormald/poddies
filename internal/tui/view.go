@@ -186,6 +186,17 @@ func renderEvent(e thread.Event, cosName string, width int) string {
 		return styledName(from, cosName) + " " + wrapText(e.Body, bodyWidth)
 	case thread.EventSystem:
 		return systemStyle.Render("[system] " + wrapText(e.Body, bodyWidth))
+	case thread.EventToolUse:
+		from := e.From
+		if from == "" {
+			from = "?"
+		}
+		label := fmt.Sprintf("[tool:%s]", e.Action)
+		body := e.Body
+		if body == "" {
+			body = "-"
+		}
+		return metaStyle.Render(styledName(from, cosName)+" "+label+" "+wrapText(body, bodyWidth))
 	case thread.EventPermissionRequest:
 		return errStyle.Render(fmt.Sprintf("[permission_request from %s] action=%s", e.From, e.Action))
 	case thread.EventPermissionGrant:

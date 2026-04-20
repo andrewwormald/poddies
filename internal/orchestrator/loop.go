@@ -403,6 +403,27 @@ func (l *Loop) Run(ctx context.Context) (result LoopResult, err error) {
 		runUsage = runUsage.Add(resp.Usage)
 		persistMeta()
 
+		// Emit tool-use events before the member's response so the log
+		// reflects the order of operations within the turn.
+		for _, tc := range resp.ToolCalls {
+			e, err := l.Log.Append(thread.Event{
+				Type:   thread.EventToolUse,
+				From:   member.Name,
+				Action: tc.Name,
+				Body:   tc.Input,
+			})
+			if err != nil {
+				return LoopResult{
+						Events:       appended,
+						StopReason:   LoopError,
+						TurnsRun:     turnsRun,
+						LastDecision: decision,
+					},
+					fmt.Errorf("append tool_use: %w", err)
+			}
+			emit(e)
+		}
+
 		if resp.Body != "" {
 			e, err := l.Log.Append(thread.Event{
 				Type: thread.EventMessage,
@@ -559,6 +580,20 @@ func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events [
 	if saveErr := thread.SaveMeta(l.Log.Path, meta); saveErr != nil && l.OnEvent != nil {
 		l.OnEvent(thread.Event{Type: thread.EventSystem, Body: "warning: meta save failed: " + saveErr.Error()})
 	}
+	// Emit any tool-use events before the CoS message.
+	for _, tc := range resp.ToolCalls {
+		e, err := l.Log.Append(thread.Event{
+			Type:   thread.EventToolUse,
+			From:   cosKey,
+			Action: tc.Name,
+			Body:   tc.Input,
+		})
+		if err != nil {
+			return fmt.Errorf("append CoS tool_use: %w", err)
+		}
+		emit(e)
+	}
+
 	// Skip empty-body responses entirely. Appending an empty message
 	// event would poison the thread: Route's last-non-meta-event lookup
 	// would return the empty event, which has no mentions, halting the

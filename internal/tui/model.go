@@ -91,6 +91,11 @@ type Options struct {
 	OnListThreads func() []ThreadSummary
 	OnDoctor      func() []DoctorCheck
 
+	// OnSwitchPod is invoked when the user selects a pod in the :pods view
+	// (Enter key on the highlighted row). The TUI records the target and
+	// quits; the launch wrapper restarts bound to the chosen pod.
+	OnSwitchPod func(name string)
+
 	// OnUsageSnapshot returns the cumulative token / cost counters for
 	// the current thread. The TUI polls this when rendering the footer
 	// so users can see burn rate in real time. Nil means "no counter".
@@ -208,6 +213,14 @@ type Model struct {
 	// other view.
 	view View
 
+	// cursorPos tracks the highlighted row in list views (:pods, :threads).
+	// Reset to 0 when the view changes.
+	cursorPos int
+
+	// switchPodTarget is set by doSwitchPod and read by the launch wrapper
+	// after the TUI quits to restart bound to the chosen pod.
+	switchPodTarget string
+
 	// paletteInput is the text buffer while the : palette is open.
 	paletteInput string
 }
@@ -254,3 +267,7 @@ func (m Model) CurrentState() State { return m.state }
 
 // Status returns the current status line. For tests.
 func (m Model) Status() string { return m.statusLine }
+
+// SwitchPodTarget returns the pod name recorded by doSwitchPod, or "".
+// Exported for tests and the launch wrapper.
+func (m Model) SwitchPodTarget() string { return m.switchPodTarget }

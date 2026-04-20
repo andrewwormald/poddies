@@ -64,6 +64,7 @@ func (m Model) applyPalette() (tea.Model, tea.Cmd) {
 	}
 
 	m.view = view
+	m.cursorPos = 0
 	m.state = m.stateForView()
 	m.statusLine = ":" + cmd
 	return m, waitForSubMsg(m.sub)

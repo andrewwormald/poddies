@@ -185,6 +185,65 @@ func (m Model) doResume(id string) (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
+// selectCurrentPod switches to the pod at cursorPos in the :pods view.
+func (m Model) selectCurrentPod() (tea.Model, tea.Cmd) {
+	if m.opts.OnListPods == nil {
+		m.statusLine = "pod listing not wired"
+		return m, waitForSubMsg(m.sub)
+	}
+	pods := m.opts.OnListPods()
+	if len(pods) == 0 {
+		m.statusLine = "no pods available"
+		return m, waitForSubMsg(m.sub)
+	}
+	pos := m.cursorPos
+	if pos >= len(pods) {
+		pos = len(pods) - 1
+	}
+	return m.doSwitchPod(pods[pos])
+}
+
+// doSwitchPod records the target pod and quits so the launch wrapper
+// can restart bound to the chosen pod.
+func (m Model) doSwitchPod(name string) (tea.Model, tea.Cmd) {
+	if m.opts.OnSwitchPod == nil {
+		m.statusLine = "pod switching not wired"
+		return m, waitForSubMsg(m.sub)
+	}
+	if name == m.opts.PodName {
+		// Already on this pod; just return to thread view.
+		m.view = ViewThread
+		m.statusLine = "already on pod " + name
+		return m, waitForSubMsg(m.sub)
+	}
+	m.opts.OnSwitchPod(name)
+	m.switchPodTarget = name
+	if m.cancelLoop != nil {
+		m.cancelLoop()
+	}
+	m.state = StateQuit
+	return m, tea.Quit
+}
+
+// selectCurrentThread resumes the thread at cursorPos in the :threads view.
+func (m Model) selectCurrentThread() (tea.Model, tea.Cmd) {
+	if m.opts.OnListThreads == nil {
+		m.statusLine = "thread listing not wired"
+		return m, waitForSubMsg(m.sub)
+	}
+	threads := m.opts.OnListThreads()
+	if len(threads) == 0 {
+		m.statusLine = "no threads available"
+		return m, waitForSubMsg(m.sub)
+	}
+	pos := m.cursorPos
+	if pos >= len(threads) {
+		pos = len(threads) - 1
+	}
+	// ThreadSummary.Name is the session/thread ID.
+	return m.doResume(threads[pos].Name)
+}
+
 // handleExport invokes OnExportPod and writes the resulting TOML bundle
 // into the thread as a system event so the user has a copy they can
 // scroll back to. Non-destructive.

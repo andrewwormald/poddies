@@ -228,6 +228,22 @@ They live at `.poddies/sessions/<id>/thread.jsonl` and are indexed in
 Stale sessions (no edits in 30 days) get cleaned up asynchronously on
 each launch. Window is configurable per root.
 
+### Cross-machine resume
+
+Session state has two layers:
+
+| Layer | Location | Portable? |
+|-------|----------|-----------|
+| Thread log (`.poddies/sessions/<id>/thread.jsonl`) | local disk | yes — sync with git, Dropbox, etc. |
+| Agent session IDs (`.meta.toml` inside each session) | local disk | yes — sync with thread log |
+| Adapter server-side context (Claude `--resume` target) | Anthropic servers | yes — session IDs are server-side |
+
+Practically: if you sync `.poddies/` to another machine (git, Dropbox,
+iCloud Drive), `/resume` will work from any machine. The thread log
+travels with the sync; Claude's server-side session context lives at
+Anthropic and is addressed by ID, so `--resume <id>` works from
+anywhere as long as the session hasn't expired server-side.
+
 ## Cost awareness
 
 The footer shows cumulative turns, tokens, and dollars for the

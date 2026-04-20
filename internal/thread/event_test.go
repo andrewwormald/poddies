@@ -212,6 +212,24 @@ func TestParseMentions_InsideIdentifier(t *testing.T) {
 	}
 }
 
+func TestEvent_Validate_ToolUse_RequiresFromAndAction(t *testing.T) {
+	if err := (&Event{Type: EventToolUse}).Validate(); err == nil {
+		t.Error("want error for missing from")
+	}
+	if err := (&Event{Type: EventToolUse, From: "alice"}).Validate(); err == nil {
+		t.Error("want error for missing action")
+	}
+	if err := (&Event{Type: EventToolUse, From: "alice", Action: "bash"}).Validate(); err != nil {
+		t.Errorf("want ok, got %v", err)
+	}
+}
+
+func TestEvent_Validate_ToolUse_IsKnown(t *testing.T) {
+	if !EventToolUse.IsKnown() {
+		t.Error("EventToolUse should be in KnownEventTypes")
+	}
+}
+
 func TestParseMentions_TrailingHyphenDropped(t *testing.T) {
 	// "@alice-" → mention is "alice-"? Regex permits '-' in slug body.
 	// slug validator in config rejects trailing '-' but we don't validate

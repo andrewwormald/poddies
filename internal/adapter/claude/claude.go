@@ -88,8 +88,11 @@ type streamMessage struct {
 }
 
 type streamContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type  string          `json:"type"`
+	Text  string          `json:"text"`
+	// tool_use fields
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
 }
 
 // Invoke implements adapter.Adapter. It renders the thread into a
@@ -180,6 +183,7 @@ func (a *Adapter) invokeStreaming(ctx context.Context, model, systemPrompt, user
 	}
 
 	var body strings.Builder
+	var toolCalls []adapter.ToolCall
 	scanner := bufio.NewScanner(stdout)
 	var parseErr error
 	var resultMsg *streamMessage
@@ -199,9 +203,20 @@ func (a *Adapter) invokeStreaming(ctx context.Context, model, systemPrompt, user
 		switch msg.Type {
 		case "assistant":
 			for _, c := range msg.Content {
-				if c.Type == "text" && c.Text != "" {
-					a.OnToken(c.Text)
-					body.WriteString(c.Text)
+				switch c.Type {
+				case "text":
+					if c.Text != "" {
+						a.OnToken(c.Text)
+						body.WriteString(c.Text)
+					}
+				case "tool_use":
+					if c.Name != "" {
+						input := strings.TrimSpace(string(c.Input))
+						if len(input) > 200 {
+							input = input[:200] + "…"
+						}
+						toolCalls = append(toolCalls, adapter.ToolCall{Name: c.Name, Input: input})
+					}
 				}
 			}
 		case "result":
@@ -235,6 +250,7 @@ func (a *Adapter) invokeStreaming(ctx context.Context, model, systemPrompt, user
 		Body:       text,
 		Mentions:   thread.ParseMentions(text),
 		StopReason: adapter.StopDone,
+		ToolCalls:  toolCalls,
 	}, nil
 }
 

@@ -30,6 +30,10 @@ const (
 	EventPermissionGrant EventType = "permission_grant"
 	// EventPermissionDeny records denial of a prior permission_request.
 	EventPermissionDeny EventType = "permission_deny"
+	// EventToolUse records an agent invoking an internal tool (bash, edit,
+	// etc.) during a streaming turn. Action = tool name; Body = input summary.
+	// Only captured when the adapter runs in streaming mode.
+	EventToolUse EventType = "tool_use"
 )
 
 // KnownEventTypes lists EventType values the orchestrator understands.
@@ -42,6 +46,7 @@ var KnownEventTypes = []EventType{
 	EventPermissionRequest,
 	EventPermissionGrant,
 	EventPermissionDeny,
+	EventToolUse,
 }
 
 // IsKnown reports whether t is a recognized EventType.
@@ -100,6 +105,13 @@ func (e *Event) Validate() error {
 	case EventPermissionGrant, EventPermissionDeny:
 		if e.RequestID == "" {
 			return fmt.Errorf("%s: request_id must not be empty", e.Type)
+		}
+	case EventToolUse:
+		if e.From == "" {
+			return fmt.Errorf("tool_use: from must not be empty")
+		}
+		if e.Action == "" {
+			return fmt.Errorf("tool_use: action (tool name) must not be empty")
 		}
 	default:
 		// unknown type: accept so forward-compat load/save works,

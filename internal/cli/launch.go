@@ -17,6 +17,13 @@ import (
 	"github.com/andrewwormald/poddies/internal/tui"
 )
 
+// launchResult carries the action the TUI requested on exit.
+// At most one field is non-empty; all empty means normal quit.
+type launchResult struct {
+	resumeSessionID string // /resume <id> target
+	switchPodName   string // pod selected in :pods view
+}
+
 // launchTUI is the poddies-with-no-args entrypoint. Cold-launch flow:
 // auto-migrate the legacy ./poddies/ directory if present, bootstrap
 // the root (.poddies) if missing, pick or create a pod, create a
@@ -82,7 +89,7 @@ func (a *App) launchTUI(ctx context.Context) error {
 		if err := log.EnsureFile(); err != nil {
 			return err
 		}
-		next, err := a.launchTUIWithSession(ctx, root, pod, log, s.ID)
+		res, err := a.launchTUIWithSession(ctx, root, pod, log, s.ID)
 		if err != nil {
 			return err
 		}
@@ -90,10 +97,17 @@ func (a *App) launchTUI(ctx context.Context) error {
 		// it automatically (R2 active-thread tracking). Best-effort — a
 		// save failure here is non-fatal.
 		_ = session.SaveLastSession(root, pod, s.ID)
-		if next == "" {
+		if res.resumeSessionID == "" && res.switchPodName == "" {
 			return nil
 		}
-		resumeTo = next
+		if res.switchPodName != "" {
+			pod = res.switchPodName
+			// Reload the last-session record for the new pod so we resume
+			// where the user left off in it.
+			resumeTo, _ = session.LoadLastSession(root, pod)
+			continue
+		}
+		resumeTo = res.resumeSessionID
 	}
 }
 
@@ -187,16 +201,16 @@ func (a *App) pickOrCreatePod(root string) (string, error) {
 }
 
 // launchTUIWithSession wires a TUI session for the given pod + log.
-// Returns the ID of a session the user wants to resume (from /resume),
-// or empty string on a normal quit. Caller loops accordingly.
-func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *thread.Log, sessionID string) (string, error) {
+// Returns a launchResult describing what action the user took on exit
+// (resume a session, switch to a different pod, or normal quit).
+func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *thread.Log, sessionID string) (launchResult, error) {
 	podCfg, err := config.LoadPod(PodDir(root, pod))
 	if err != nil {
-		return "", err
+		return launchResult{}, err
 	}
 	memberNames, err := listMemberNames(PodDir(root, pod))
 	if err != nil {
-		return "", err
+		return launchResult{}, err
 	}
 
 	start := func(lctx context.Context, kickoff string, onEvent func(thread.Event)) (orchestrator.LoopResult, error) {
@@ -335,11 +349,12 @@ func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *t
 		return out
 	}
 
-	// Resume output channel: the TUI sets this via OnResumeSession when
-	// the user picks a session from the palette. After the TUI quits we
-	// pick this up and loop the outer launchTUI into the new session.
+	// Exit-action channels: TUI populates one on quit; launchTUI reads it
+	// to decide whether to resume a session, switch pods, or exit.
 	var resumeTarget string
+	var switchPodTarget string
 	onResumeSession := func(id string) { resumeTarget = id }
+	onSwitchPod := func(name string) { switchPodTarget = name }
 
 	cosName := ""
 	if podCfg.ChiefOfStaff.Enabled {
@@ -364,11 +379,12 @@ func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *t
 		OnListThreads:   listThreads,
 		OnListSessions:  listSessions,
 		OnResumeSession: onResumeSession,
+		OnSwitchPod:     onSwitchPod,
 		OnExportPod:     exportPod,
 		OnDoctor:        runDoctor,
 		OnUsageSnapshot: usageSnapshot,
 	}, a.In, a.Out)
-	return resumeTarget, err
+	return launchResult{resumeSessionID: resumeTarget, switchPodName: switchPodTarget}, err
 }
 
 // Silence unused imports if some branches are compiled out in tests.

@@ -78,21 +78,36 @@ func (m Model) renderPodsView() string {
 		return m.renderViewFrame(":pods", metaStyle.Render("\n  (pod listing not wired in this session)\n"))
 	}
 	pods := m.opts.OnListPods()
+	cursor := m.cursorPos
+	if len(pods) > 0 && cursor >= len(pods) {
+		cursor = len(pods) - 1
+	}
 	var b strings.Builder
 	b.WriteString("\n")
 	if len(pods) == 0 {
 		b.WriteString(metaStyle.Render("  (no pods)\n"))
 	} else {
-		for _, p := range pods {
-			marker := "  "
-			if p == m.opts.PodName {
+		for i, p := range pods {
+			var marker string
+			switch {
+			case i == cursor && p == m.opts.PodName:
+				marker = "▶ " // cursor + current
+			case i == cursor:
+				marker = "▶ "
+			case p == m.opts.PodName:
 				marker = "» "
+			default:
+				marker = "  "
 			}
-			fmt.Fprintf(&b, "%s%s\n", marker, lipgloss.NewStyle().Bold(true).Render(p))
+			name := lipgloss.NewStyle().Bold(i == cursor).Render(p)
+			if i == cursor {
+				name = lipgloss.NewStyle().Bold(true).Underline(true).Render(p)
+			}
+			fmt.Fprintf(&b, "%s%s\n", marker, name)
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString(metaStyle.Render("  » current pod · switching via TUI lands in a future phase"))
+	b.WriteString(metaStyle.Render("  ▶ cursor (↑↓ navigate · Enter switch) · » current pod"))
 	return m.renderViewFrame(":pods", b.String())
 }
 
@@ -101,25 +116,36 @@ func (m Model) renderThreadsView() string {
 		return m.renderViewFrame(":threads", metaStyle.Render("\n  (thread listing not wired in this session)\n"))
 	}
 	ts := m.opts.OnListThreads()
+	cursor := m.cursorPos
+	if len(ts) > 0 && cursor >= len(ts) {
+		cursor = len(ts) - 1
+	}
 	var b strings.Builder
 	b.WriteString("\n")
 	if len(ts) == 0 {
 		b.WriteString(metaStyle.Render("  (no threads yet)\n"))
 	} else {
-		for _, t := range ts {
+		for i, t := range ts {
+			marker := "  "
+			if i == cursor {
+				marker = "▶ "
+			}
 			if t.Corrupt {
-				fmt.Fprintf(&b, "  %s  %s\n", errStyle.Render("["+t.Name+"]"), metaStyle.Render("CORRUPT"))
+				fmt.Fprintf(&b, "%s%s  %s\n", marker, errStyle.Render("["+t.Name+"]"), metaStyle.Render("CORRUPT"))
 				continue
 			}
 			last := t.LastFrom
 			if last == "" {
 				last = "-"
 			}
-			fmt.Fprintf(&b, "  %-24s events=%-4d last=%-12s  %s\n",
-				lipgloss.NewStyle().Bold(true).Render(t.Name),
+			nameStyle := lipgloss.NewStyle().Bold(i == cursor).Underline(i == cursor)
+			fmt.Fprintf(&b, "%s%-24s events=%-4d last=%-12s  %s\n",
+				marker, nameStyle.Render(t.Name),
 				t.Events, last, t.ModifiedAt)
 		}
 	}
+	b.WriteString("\n")
+	b.WriteString(metaStyle.Render("  ▶ cursor (↑↓ navigate · Enter open thread)"))
 	return m.renderViewFrame(":threads · "+m.opts.PodName, b.String())
 }
 
@@ -170,14 +196,20 @@ func (m Model) renderHelpView() string {
     :pods      pods in this root
     :threads   threads in this pod
     :perms     pending permission requests
+    :stats     token / cost drill-down
     :doctor    adapter + root health check
     :help      this screen
     :quit      exit
 
   In the chat view:
-    /add, /remove, /edit, /export, /help, /quit
+    /add, /remove, /edit, /export, /resume, /stats, /help, /quit
     Esc cancels an active wizard
     a / d / A / D  approve / deny pending permissions
+
+  In :pods and :threads views:
+    ↑ / ↓   move cursor
+    Enter   switch to selected pod or open thread
+    Esc     return to :thread
 
   Global:
     :   open palette

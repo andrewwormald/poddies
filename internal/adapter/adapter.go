@@ -86,6 +86,17 @@ type PermissionRequest struct {
 	Payload []byte // arbitrary JSON payload, opaque to the orchestrator
 }
 
+// ToolCall records one tool invocation observed during a streaming turn.
+// Only populated by adapters that run in streaming mode and can see
+// intermediate tool calls (e.g. Claude with --output-format stream-json).
+type ToolCall struct {
+	// Name is the tool name (e.g. "bash", "edit", "read").
+	Name string
+	// Input is a concise string representation of the call arguments,
+	// suitable for display in the thread log. May be truncated.
+	Input string
+}
+
 // InvokeResponse is a single turn's output from an adapter.
 type InvokeResponse struct {
 	// Body is the agent's final user-facing text for the turn.
@@ -107,6 +118,11 @@ type InvokeResponse struct {
 	// stdout mode). Populated by Claude's JSON result and by the mock
 	// adapter's Auto mode so the TUI can display burn rate.
 	Usage Usage
+
+	// ToolCalls lists tool invocations the adapter observed during the
+	// turn, in order. Only populated in streaming mode. Empty in
+	// non-streaming and mock adapters.
+	ToolCalls []ToolCall
 
 	// SessionID, when non-empty, identifies the adapter-side session
 	// that produced this response. The orchestrator persists this and

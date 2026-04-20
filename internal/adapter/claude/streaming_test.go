@@ -140,8 +140,11 @@ func TestInvoke_Streaming_FinalBodyEqualsConcatenation(t *testing.T) {
 	}
 }
 
-// --- tool-use messages ignored ---
+// --- tool-use messages ---
 
+// TestInvoke_Streaming_ToolUseIgnored verifies that a top-level type=tool_use
+// message (not inside an assistant content block) is silently skipped — it's
+// not a format the real Claude CLI emits but the parser should be robust.
 func TestInvoke_Streaming_ToolUseIgnored(t *testing.T) {
 	lines := `{"type":"tool_use","name":"bash","input":{"command":"ls"}}
 {"type":"assistant","content":[{"type":"text","text":"done"}]}
@@ -160,6 +163,72 @@ func TestInvoke_Streaming_ToolUseIgnored(t *testing.T) {
 	}
 	if len(tokens) != 1 || tokens[0] != "done" {
 		t.Errorf("want only text tokens, got %v", tokens)
+	}
+}
+
+// TestInvoke_Streaming_ToolUseContentBlock verifies that tool_use content
+// blocks inside assistant messages are captured as ToolCalls in the response.
+func TestInvoke_Streaming_ToolUseContentBlock_CapturedAsToolCall(t *testing.T) {
+	lines := `{"type":"assistant","content":[{"type":"tool_use","name":"bash","input":{"command":"ls -la"}}]}
+{"type":"assistant","content":[{"type":"tool_use","name":"read","input":{"file_path":"/tmp/x"}}]}
+{"type":"assistant","content":[{"type":"text","text":"done"}]}
+{"type":"result","subtype":"success","result":"done","is_error":false}
+`
+	a, _ := streamingAdapter(lines)
+	a.OnToken = func(string) {}
+
+	got, err := a.Invoke(context.Background(), validMemberReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ToolCalls) != 2 {
+		t.Fatalf("want 2 tool calls, got %d: %v", len(got.ToolCalls), got.ToolCalls)
+	}
+	if got.ToolCalls[0].Name != "bash" {
+		t.Errorf("tool[0].Name: want bash, got %q", got.ToolCalls[0].Name)
+	}
+	if got.ToolCalls[1].Name != "read" {
+		t.Errorf("tool[1].Name: want read, got %q", got.ToolCalls[1].Name)
+	}
+}
+
+func TestInvoke_Streaming_ToolUseContentBlock_InputTruncatedAt200(t *testing.T) {
+	longInput := `{"command":"` + strings.Repeat("x", 300) + `"}`
+	lines := `{"type":"assistant","content":[{"type":"tool_use","name":"bash","input":` + longInput + `}]}
+{"type":"result","subtype":"success","result":"ok","is_error":false}
+`
+	a, _ := streamingAdapter(lines)
+	a.OnToken = func(string) {}
+
+	got, err := a.Invoke(context.Background(), validMemberReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ToolCalls) != 1 {
+		t.Fatalf("want 1 tool call, got %d", len(got.ToolCalls))
+	}
+	// 200 bytes + 3-byte UTF-8 ellipsis "…" = max 203 bytes
+	if len(got.ToolCalls[0].Input) > 203 {
+		t.Errorf("input should be truncated, len=%d", len(got.ToolCalls[0].Input))
+	}
+	if !strings.HasSuffix(got.ToolCalls[0].Input, "…") {
+		t.Errorf("truncated input should end with ellipsis")
+	}
+}
+
+func TestInvoke_Streaming_NoToolCalls_EmptySlice(t *testing.T) {
+	lines := `{"type":"assistant","content":[{"type":"text","text":"hi"}]}
+{"type":"result","subtype":"success","result":"hi","is_error":false}
+`
+	a, _ := streamingAdapter(lines)
+	a.OnToken = func(string) {}
+
+	got, err := a.Invoke(context.Background(), validMemberReq())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ToolCalls) != 0 {
+		t.Errorf("want no tool calls, got %v", got.ToolCalls)
 	}
 }
 
