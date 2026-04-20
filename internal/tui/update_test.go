@@ -335,6 +335,38 @@ func TestRenderInputLine_NoGhost_WhenNoMembers(t *testing.T) {
 	}
 }
 
+func TestRenderInputLine_Ghost_UsesOnListMembers(t *testing.T) {
+	// Regression: autocomplete must use OnListMembers (dynamic roster), not
+	// only opts.Members (static slice). When the static slice is empty but
+	// OnListMembers returns members, the ghost should still appear.
+	m := NewModel(Options{
+		PodName:       "demo",
+		StartLoop:     okStartLoop,
+		OnListMembers: func() []string { return []string{"alice", "bob"} },
+		// Members intentionally left empty to exercise the fallback path.
+	})
+	m, _ = updateAs(m, sizeMsg())
+	m.input.SetValue("@al")
+	rendered := m.renderInputLine()
+	if !strings.Contains(rendered, "ice") {
+		t.Errorf("want ghost 'ice' from OnListMembers, got %q", rendered)
+	}
+}
+
+func TestTabKey_Autocomplete_UsesOnListMembers(t *testing.T) {
+	m := NewModel(Options{
+		PodName:       "demo",
+		StartLoop:     okStartLoop,
+		OnListMembers: func() []string { return []string{"alice"} },
+	})
+	m, _ = updateAs(m, sizeMsg())
+	m.input.SetValue("@al")
+	m, _ = updateAs(m, tea.KeyMsg{Type: tea.KeyTab})
+	if !strings.HasPrefix(m.input.Value(), "@alice") {
+		t.Errorf("Tab should complete to @alice, got %q", m.input.Value())
+	}
+}
+
 // --- helpers ---
 
 func updateAs(m Model, msg tea.Msg) (Model, tea.Cmd) {
