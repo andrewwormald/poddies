@@ -3,9 +3,11 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/andrewwormald/poddies/internal/orchestrator"
 	"github.com/andrewwormald/poddies/internal/thread"
@@ -16,7 +18,7 @@ import (
 // message that opens the addMemberWizard on first tick. Otherwise, if
 // an InitialKickoff was configured, it auto-submits that instead.
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{waitForSubMsg(m.sub)}
+	cmds := []tea.Cmd{waitForSubMsg(m.sub), waitForSubMsg(m.breakawaySub)}
 	if m.needsOnboarding() {
 		cmds = append(cmds, func() tea.Msg { return startOnboardingMsg{} })
 	} else if m.opts.InitialKickoff != "" {
@@ -65,11 +67,34 @@ func waitForSubMsg(sub <-chan any) tea.Cmd {
 	}
 }
 
+// activeBreakaway tracks a running background conversation.
+type activeBreakaway struct {
+	Members []string
+	Topic   string
+}
+
+// BreakawayEventMsg streams a single event from a breakaway conversation.
+type BreakawayEventMsg struct {
+	Event   thread.Event
+	Members []string // participants in this breakaway
+}
+
+// BreakawayDoneMsg signals a breakaway completed.
+type BreakawayDoneMsg struct {
+	Summary string
+	Members []string
+	LogPath string // path to the breakaway thread log for debugging
+}
+
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		return m.onResize(msg)
+	case BreakawayEventMsg:
+		return m.onBreakawayEvent(msg)
+	case BreakawayDoneMsg:
+		return m.onBreakawayDone(msg)
 	case tea.KeyMsg:
 		return m.onKey(msg)
 	case autoSubmitMsg:
@@ -88,8 +113,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastErr = msg.err
 		m.statusLine = "error: " + msg.err.Error()
 		return m, waitForSubMsg(m.sub)
+	case tea.MouseMsg:
+		// Forward mouse events (scroll wheel) to the viewport.
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
 	}
 	return m, nil
+}
+
+// autoScrollBottom scrolls to the bottom only if the user was already
+// at the bottom (within 2 lines). This prevents new events from yanking
+// the user back down while they're reading history.
+func (m *Model) autoScrollBottom() {
+	atBottom := m.viewport.AtBottom() || m.viewport.TotalLineCount()-m.viewport.YOffset <= m.viewport.Height+2
+	if atBottom {
+		m.viewport.GotoBottom()
+	}
 }
 
 // chatWidth returns the width available to the chat viewport,
@@ -112,12 +152,45 @@ func (m Model) recalcViewport() Model {
 	w := m.chatWidth()
 	m.viewport.Width = w
 	m.input.Width = w - 4
-	m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, w))
+	m.viewport.SetContent(m.viewportContent(w))
 	return m
 }
 
+// viewportContent builds the transcript text plus an optional typing
+// indicator when a loop is running.
+func (m Model) viewportContent(w int) string {
+	content := renderTranscript(m.events, m.opts.CoSName, w, m.avatarSize, m.debug)
+	if m.state == StateRunning {
+		content += m.renderTypingIndicator()
+	}
+	return content
+}
+
+// Spinner frames for the typing indicator.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// renderTypingIndicator returns a coloured "is typing…" line with spinner.
+func (m Model) renderTypingIndicator() string {
+	frame := spinnerFrames[m.typingTick%len(spinnerFrames)]
+	who := m.typingWho
+	if who == "" {
+		return metaStyle.Render(frame+" thinking…") + "\n"
+	}
+	av := AvatarFor(who)
+	style := lipgloss.NewStyle().Foreground(av.Color)
+	return style.Render(frame+" "+who+" is typing…") + "\n"
+}
+
+// Width thresholds for responsive defaults.
+const (
+	smallWindowW = 100 // below this: hide viz, small avatars
+	largeWindowW = 140 // above this: show viz, large avatars
+)
+
 // onResize updates the viewport and input widths, caching dimensions
-// so View can lay out cleanly.
+// so View can lay out cleanly. On the first resize (when we learn the
+// actual terminal size), applies size-based defaults for viz and avatar
+// unless the user has persisted preferences.
 func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.width = msg.Width
 	m.height = msg.Height
@@ -128,10 +201,32 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		vpH = 3
 	}
 	m.viewport.Height = vpH
+
+	// Apply size-based defaults once (first resize = actual terminal size).
+	if !m.prefsApplied {
+		m.prefsApplied = true
+		if m.prefs.VizOpen == nil {
+			m.vizOpen = msg.Width >= largeWindowW
+		}
+		if m.prefs.AvatarSize == nil {
+			if msg.Width < smallWindowW {
+				m.avatarSize = AvatarOff
+			} else if msg.Width >= largeWindowW {
+				m.avatarSize = AvatarLarge
+			} else {
+				m.avatarSize = AvatarSmall
+			}
+		}
+	}
+
 	m.ready = true
 	m = m.recalcViewport()
 	m.viewport.GotoBottom()
-	return m, nil
+	var cmds []tea.Cmd
+	if m.vizOpen {
+		cmds = append(cmds, animTick())
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // onKey dispatches keyboard input based on state.
@@ -161,19 +256,24 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, waitForSubMsg(m.sub)
 		}
 	case tea.KeyUp:
-		if m.state == StateIdle && (m.view == ViewPods || m.view == ViewThreads) {
+		if (m.state == StateIdle || m.state == StateRunning) && (m.view == ViewPods || m.view == ViewThreads || m.view == ViewSessions) {
 			if m.cursorPos > 0 {
 				m.cursorPos--
 			}
 			return m, waitForSubMsg(m.sub)
 		}
 	case tea.KeyDown:
-		if m.state == StateIdle && (m.view == ViewPods || m.view == ViewThreads) {
+		if (m.state == StateIdle || m.state == StateRunning) && (m.view == ViewPods || m.view == ViewThreads || m.view == ViewSessions) {
 			m.cursorPos = m.cursorPos + 1 // clamped in view render
 			return m, waitForSubMsg(m.sub)
 		}
 	case tea.KeyTab:
-		if m.state == StateIdle && m.view == ViewThread {
+		if (m.state == StateIdle || m.state == StateRunning) && m.view == ViewThread {
+			// Try slash command completion first, then @mention.
+			if _, ok := findSlashSuggestion(m.input.Value()); ok {
+				m.input.SetValue(applySlashSuggestion(m.input.Value()))
+				return m, waitForSubMsg(m.sub)
+			}
 			if _, ok := findMentionSuggestion(m.input.Value(), m.currentRoster(), m.opts.CoSName); ok {
 				m.input.SetValue(applySuggestion(m.input.Value(), m.currentRoster(), m.opts.CoSName))
 				return m, waitForSubMsg(m.sub)
@@ -187,6 +287,10 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// In :threads view, Enter resumes the highlighted thread (session).
 		if m.state == StateIdle && m.view == ViewThreads {
 			return m.selectCurrentThread()
+		}
+		// In :sessions view, Enter resumes the highlighted session.
+		if m.state == StateIdle && m.view == ViewSessions {
+			return m.selectCurrentSession()
 		}
 		if m.state == StatePrompting {
 			text := m.input.Value()
@@ -203,12 +307,11 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Global key shortcuts (available from any view in Idle/Palette-less state):
-	//   : → open command palette
-	//   ? → open help view
-	// These are intercepted before input field updates so typing them
-	// in the chat would need Shift/etc. (future refinement if needed).
-	if m.state == StateIdle && msg.Type == tea.KeyRunes {
+	// Global key shortcuts — available in Idle and Running states so
+	// the user can change views, toggle viz/avatars, and compose the
+	// next message while agents are working. Only message submission
+	// (Enter) is blocked during Running.
+	if (m.state == StateIdle || m.state == StateRunning) && msg.Type == tea.KeyRunes {
 		switch string(msg.Runes) {
 		case "v":
 			// Toggle the pod-visualization panel.
@@ -216,11 +319,30 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.vizOpen = !m.vizOpen
 				m = m.recalcViewport()
 				m.viewport.GotoBottom()
+				m.savePrefs()
 				var tickCmd tea.Cmd
 				if m.vizOpen {
 					tickCmd = animTick()
 				}
 				return m, tea.Batch(waitForSubMsg(m.sub), tickCmd)
+			}
+		case "p":
+			// Cycle avatar size: Small → Large → Off → Small …
+			if m.view == ViewThread && m.input.Value() == "" {
+				switch m.avatarSize {
+				case AvatarSmall:
+					m.avatarSize = AvatarLarge
+				case AvatarLarge:
+					m.avatarSize = AvatarOff
+				default:
+					m.avatarSize = AvatarSmall
+				}
+				m = m.recalcViewport()
+				m.viewport.GotoBottom()
+				m.savePrefs()
+				labels := map[AvatarSize]string{AvatarOff: "off", AvatarSmall: "small", AvatarLarge: "large"}
+				m.statusLine = "avatars: " + labels[m.avatarSize]
+				return m, waitForSubMsg(m.sub)
 			}
 		case ":":
 			if m.view != ViewThread || m.input.Value() == "" {
@@ -251,7 +373,15 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.state == StateIdle && m.view == ViewThread {
+	// Scroll keys always go to the viewport (not the input field).
+	switch msg.Type {
+	case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+	}
+
+	if (m.state == StateIdle || m.state == StateRunning) && m.view == ViewThread {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
@@ -261,7 +391,6 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
 	}
-	// during a running loop, scroll the viewport instead of typing.
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	return m, cmd
@@ -287,6 +416,8 @@ func (m Model) submit(text string) (tea.Model, tea.Cmd) {
 	}
 	m.state = StateRunning
 	m.statusLine = "running…"
+	m.typingWho = ""
+	m.typingTick = 0
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelLoop = cancel
 	start := m.opts.StartLoop
@@ -297,23 +428,40 @@ func (m Model) submit(text string) (tea.Model, tea.Cmd) {
 		})
 		sub <- LoopDoneMsg{Result: result, Err: err}
 	}()
-	return m, waitForSubMsg(m.sub)
+	return m, tea.Batch(waitForSubMsg(m.sub), animTick())
 }
 
 // onAnimTick advances the viz panel animation. Re-arms the tick while
 // the panel is open; prunes fully-expired links to bound slice growth.
 func (m Model) onAnimTick(msg animTickMsg) (tea.Model, tea.Cmd) {
-	if !m.vizOpen {
-		return m, nil // panel closed — let the tick die
-	}
-	now := msg.t
-	live := m.activeLinks[:0]
-	for _, l := range m.activeLinks {
-		if !l.expired(now) {
-			live = append(live, l)
+	needTick := false
+
+	// Advance typing spinner when running.
+	if m.state == StateRunning {
+		m.typingTick++
+		if m.ready {
+			m.viewport.SetContent(m.viewportContent(m.chatWidth()))
+			m.autoScrollBottom()
 		}
+		needTick = true
 	}
-	m.activeLinks = live
+
+	// Prune expired viz links.
+	if m.vizOpen {
+		now := msg.t
+		live := m.activeLinks[:0]
+		for _, l := range m.activeLinks {
+			if !l.expired(now) {
+				live = append(live, l)
+			}
+		}
+		m.activeLinks = live
+		needTick = true
+	}
+
+	if !needTick {
+		return m, nil
+	}
 	return m, animTick()
 }
 
@@ -323,7 +471,7 @@ func (m Model) onEvent(msg EventMsg) (tea.Model, tea.Cmd) {
 	e := msg.Event
 	m.events = append(m.events, e)
 
-	// Track who spoke for viz animations.
+	// Track who spoke for viz animations + typing indicator.
 	switch e.Type {
 	case "message":
 		if e.From != "" && e.From != m.lastSpeaker {
@@ -336,6 +484,12 @@ func (m Model) onEvent(msg EventMsg) (tea.Model, tea.Cmd) {
 		if e.From != "" {
 			m.lastSpeaker = e.From
 		}
+		// This speaker just responded — set typing to whoever they @mention next.
+		if len(e.Mentions) > 0 {
+			m.typingWho = e.Mentions[0]
+		} else {
+			m.typingWho = ""
+		}
 	case "human":
 		if m.lastSpeaker != "" {
 			m.activeLinks = append(m.activeLinks, vizLink{
@@ -345,6 +499,12 @@ func (m Model) onEvent(msg EventMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 		m.lastSpeaker = ""
+		// Human just spoke — set typing to whoever they @mention.
+		if len(e.Mentions) > 0 {
+			m.typingWho = e.Mentions[0]
+		} else {
+			m.typingWho = ""
+		}
 	}
 
 	// Keep the slice bounded; old links are pruned by onAnimTick when
@@ -354,10 +514,100 @@ func (m Model) onEvent(msg EventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.ready {
-		m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, m.viewport.Width))
-		m.viewport.GotoBottom()
+		m.viewport.SetContent(m.viewportContent(m.viewport.Width))
+		m.autoScrollBottom()
 	}
 	return m, waitForSubMsg(m.sub)
+}
+
+// onBreakawayEvent handles a single event from a background breakaway.
+// Updates the viz panel but does NOT add to the main transcript.
+func (m Model) onBreakawayEvent(msg BreakawayEventMsg) (tea.Model, tea.Cmd) {
+	e := msg.Event
+	// Track as active breakaway if not already.
+	if !m.hasBreakaway(msg.Members) {
+		m.breakaways = append(m.breakaways, activeBreakaway{
+			Members: msg.Members,
+		})
+	}
+	// Create viz links for the breakaway conversation.
+	if e.Type == thread.EventMessage && e.From != "" {
+		for _, other := range msg.Members {
+			if other != e.From {
+				m.activeLinks = append(m.activeLinks, vizLink{
+					from:    e.From,
+					to:      other,
+					startAt: time.Now(),
+				})
+			}
+		}
+	}
+
+	// In debug mode, show breakaway events inline in the transcript.
+	if m.debug && e.Type == thread.EventMessage {
+		names := strings.Join(msg.Members, "+")
+		m.events = append(m.events, thread.Event{
+			Type: thread.EventSystem,
+			Body: fmt.Sprintf("[breakaway:%s] [%s] %s", names, e.From, e.Body),
+		})
+		if m.ready {
+			m.viewport.SetContent(m.viewportContent(m.chatWidth()))
+			m.autoScrollBottom()
+		}
+	}
+	return m, waitForSubMsg(m.breakawaySub)
+}
+
+// onBreakawayDone handles a completed breakaway — posts the summary
+// to the main transcript.
+func (m Model) onBreakawayDone(msg BreakawayDoneMsg) (tea.Model, tea.Cmd) {
+	// Remove from active breakaways.
+	var remaining []activeBreakaway
+	for _, ba := range m.breakaways {
+		if !sameMembers(ba.Members, msg.Members) {
+			remaining = append(remaining, ba)
+		}
+	}
+	m.breakaways = remaining
+
+	// Post summary to transcript.
+	if msg.Summary != "" {
+		names := strings.Join(msg.Members, " & ")
+		body := fmt.Sprintf("[breakaway] %s concluded: %s", names, msg.Summary)
+		if m.debug && msg.LogPath != "" {
+			body += fmt.Sprintf("\n  log: %s", msg.LogPath)
+		}
+		m.events = append(m.events, thread.Event{
+			Type: thread.EventSystem,
+			Body: body,
+		})
+		if m.ready {
+			m.viewport.SetContent(m.viewportContent(m.chatWidth()))
+			m.autoScrollBottom()
+		}
+	}
+	return m, waitForSubMsg(m.breakawaySub)
+}
+
+func (m Model) hasBreakaway(members []string) bool {
+	for _, ba := range m.breakaways {
+		if sameMembers(ba.Members, members) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameMembers(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // onLoopDone transitions back to Idle and summarizes the run.
@@ -365,6 +615,7 @@ func (m Model) onEvent(msg EventMsg) (tea.Model, tea.Cmd) {
 func (m Model) onLoopDone(msg LoopDoneMsg) (tea.Model, tea.Cmd) {
 	m.state = StateIdle
 	m.cancelLoop = nil
+	m.typingWho = ""
 	if msg.Err != nil {
 		m.lastErr = msg.Err
 		m.statusLine = fmt.Sprintf("error: %v", msg.Err)

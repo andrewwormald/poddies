@@ -6,7 +6,7 @@ import (
 )
 
 func TestValidateSlug_Accepts(t *testing.T) {
-	cases := []string{"alice", "bob-2", "a", "platform-pod", "x1", "a-b-c"}
+	cases := []string{"alice", "Alice", "Bob-2", "a", "platform-pod", "x1", "a-b-c", "DeliVi"}
 	for _, c := range cases {
 		t.Run(c, func(t *testing.T) {
 			if err := ValidateSlug(c); err != nil {
@@ -19,7 +19,6 @@ func TestValidateSlug_Accepts(t *testing.T) {
 func TestValidateSlug_Rejects(t *testing.T) {
 	cases := map[string]string{
 		"empty":          "",
-		"uppercase":      "Alice",
 		"leading-dash":   "-alice",
 		"trailing-dash":  "alice-",
 		"double-dash-ok": "a--b", // actually allowed by regex (double dash); flip if we want stricter

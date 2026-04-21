@@ -40,6 +40,8 @@ func isSlugByte(b byte) bool {
 	switch {
 	case b >= 'a' && b <= 'z':
 		return true
+	case b >= 'A' && b <= 'Z':
+		return true
 	case b >= '0' && b <= '9':
 		return true
 	case b == '-':
@@ -47,6 +49,51 @@ func isSlugByte(b byte) bool {
 	default:
 		return false
 	}
+}
+
+// slashCommands is the list of available slash commands for autocomplete.
+var slashCommands = []string{
+	"add", "clear", "debug-restart", "edit", "export",
+	"help", "new", "quit", "remove", "resume", "stats",
+}
+
+// slashPrefix returns the partial command after '/' at the start of
+// input. Returns ok=false when input doesn't start with '/'.
+func slashPrefix(input string) (prefix string, ok bool) {
+	if !strings.HasPrefix(input, "/") {
+		return "", false
+	}
+	// Only the first word matters — no space yet.
+	if strings.Contains(input[1:], " ") {
+		return "", false
+	}
+	return input[1:], true
+}
+
+// findSlashSuggestion picks the best slash command to show as ghost text.
+func findSlashSuggestion(input string) (suggestion string, ok bool) {
+	prefix, active := slashPrefix(input)
+	if !active {
+		return "", false
+	}
+	for _, cmd := range slashCommands {
+		if cmd == prefix {
+			return "", false // exact match
+		}
+		if strings.HasPrefix(cmd, prefix) {
+			return cmd[len(prefix):], true
+		}
+	}
+	return "", false
+}
+
+// applySlashSuggestion returns input with the ghost suffix accepted.
+func applySlashSuggestion(input string) string {
+	suffix, ok := findSlashSuggestion(input)
+	if !ok {
+		return input
+	}
+	return input + suffix
 }
 
 // findMentionSuggestion picks the best single candidate to show as a
@@ -57,13 +104,14 @@ func findMentionSuggestion(input string, members []string, cosName string) (sugg
 	if !active {
 		return "", false
 	}
+	lowerPrefix := strings.ToLower(prefix)
 	candidates := mentionCandidates(members, cosName)
 	for _, c := range candidates {
-		if c.Name == prefix {
+		if strings.EqualFold(c.Name, prefix) {
 			// exact match → no ghost needed
 			return "", false
 		}
-		if strings.HasPrefix(c.Name, prefix) {
+		if strings.HasPrefix(strings.ToLower(c.Name), lowerPrefix) {
 			return c.Name[len(prefix):], true
 		}
 	}

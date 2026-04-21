@@ -136,12 +136,11 @@ func NewID() string {
 
 // mentionRe matches @mentions. We require the character before the '@'
 // to be a non-alphanumeric (word-boundary-ish) so "email@host" doesn't
-// match "host". The captured name must be a slug (lowercase).
-var mentionRe = regexp.MustCompile(`(?:^|[^a-zA-Z0-9_])@([a-z0-9][a-z0-9-]*)`)
+// match "host". The captured name must be a slug (letters, digits, hyphens).
+var mentionRe = regexp.MustCompile(`(?:^|[^a-zA-Z0-9_])@([a-zA-Z0-9][a-zA-Z0-9-]*)`)
 
 // ParseMentions extracts @mentions from body in order of appearance,
-// deduplicated. Case-sensitive: "@Alice" is not a mention (slugs are
-// lowercase).
+// deduplicated.
 func ParseMentions(body string) []string {
 	matches := mentionRe.FindAllStringSubmatch(body, -1)
 	if len(matches) == 0 {

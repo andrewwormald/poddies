@@ -207,15 +207,14 @@ func TestUpdate_ErrorMsg_SurfacesError(t *testing.T) {
 	}
 }
 
-func TestUpdate_KeyWhileRunning_GoesToViewport(t *testing.T) {
-	// while running, keys should not end up in the input. Easiest
-	// assertion: input value remains unchanged after a key press.
+func TestUpdate_KeyWhileRunning_AllowsTypeAhead(t *testing.T) {
+	// while running, keys should still reach the input (type-ahead).
 	m := NewModel(Options{PodName: "demo", StartLoop: okStartLoop})
 	m, _ = updateAs(m, sizeMsg())
 	m.state = StateRunning
 	m, _ = updateAs(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
-	if m.input.Value() != "" {
-		t.Errorf("input should be empty while running, got %q", m.input.Value())
+	if m.input.Value() != "x" {
+		t.Errorf("input should accept type-ahead, got %q", m.input.Value())
 	}
 }
 
@@ -253,19 +252,29 @@ func TestView_WithEvents_RendersTranscript(t *testing.T) {
 }
 
 func TestRenderEvent_CoversAllTypes(t *testing.T) {
-	cases := []thread.Event{
+	// Events that render content.
+	visible := []thread.Event{
 		{Type: thread.EventHuman, Body: "h"},
 		{Type: thread.EventMessage, From: "alice", Body: "m"},
 		{Type: thread.EventSystem, Body: "s"},
+		{Type: "future_type", Body: "x"},
+	}
+	for _, e := range visible {
+		got := renderEvent(e, "", 80, AvatarSmall)
+		if got == "" {
+			t.Errorf("empty rendering for %+v", e)
+		}
+	}
+	// Permission events are hidden (shown in the dedicated pane).
+	hidden := []thread.Event{
 		{Type: thread.EventPermissionRequest, From: "alice", Action: "run"},
 		{Type: thread.EventPermissionGrant, From: "human", RequestID: "r1"},
 		{Type: thread.EventPermissionDeny, From: "human", RequestID: "r2"},
-		{Type: "future_type", Body: "x"},
 	}
-	for _, e := range cases {
-		got := renderEvent(e, "", 80)
-		if got == "" {
-			t.Errorf("empty rendering for %+v", e)
+	for _, e := range hidden {
+		got := renderEvent(e, "", 80, AvatarSmall)
+		if got != "" {
+			t.Errorf("expected empty for %s, got %q", e.Type, got)
 		}
 	}
 }
@@ -291,15 +300,15 @@ func TestUpdate_Tab_NoSuggestion_InputUnchanged(t *testing.T) {
 	}
 }
 
-func TestUpdate_Tab_WhileRunning_NoAccept(t *testing.T) {
+func TestUpdate_Tab_WhileRunning_AcceptsCompletion(t *testing.T) {
 	m := NewModel(Options{PodName: "demo", Members: []string{"alice"}, StartLoop: okStartLoop})
 	m, _ = updateAs(m, sizeMsg())
 	m.state = StateRunning
 	m.input.SetValue("@al")
 	m, _ = updateAs(m, tea.KeyMsg{Type: tea.KeyTab})
-	// should NOT accept while running (input routes to viewport)
-	if m.input.Value() != "@al" {
-		t.Errorf("want input unchanged while running, got %q", m.input.Value())
+	// Tab should accept completion even while running (type-ahead).
+	if m.input.Value() != "@alice " {
+		t.Errorf("want @alice with space, got %q", m.input.Value())
 	}
 }
 

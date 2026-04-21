@@ -169,7 +169,7 @@ func TestPod_Validate_HumanLead_OK(t *testing.T) {
 
 func TestPod_Validate_NonHumanLead_SlugValidated(t *testing.T) {
 	p := fullPod()
-	p.Lead = "NotASlug"
+	p.Lead = "not a slug"
 	if err := p.Validate(); err == nil {
 		t.Error("want error for non-slug lead")
 	}

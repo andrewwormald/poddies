@@ -5,10 +5,10 @@ import (
 	"regexp"
 )
 
-// slugRe matches DNS-friendly identifiers: lowercase alphanumerics and
-// '-', with no leading/trailing dash. Unicode is intentionally excluded
-// because these identifiers become filenames (members/<name>.toml).
-var slugRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
+// slugRe matches identifiers: alphanumerics (any case) and '-', with
+// no leading/trailing dash. Unicode is intentionally excluded because
+// these identifiers become filenames (members/<name>.toml).
+var slugRe = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$`)
 
 // MaxSlugLen caps identifier length (pod names, member names).
 const MaxSlugLen = 64
@@ -30,7 +30,7 @@ func ValidateSlug(s string) error {
 		return fmt.Errorf("name %q is too long (max %d)", s, MaxSlugLen)
 	}
 	if !slugRe.MatchString(s) {
-		return fmt.Errorf("name %q is not a valid slug (use lowercase letters, digits, and '-'; no leading/trailing '-')", s)
+		return fmt.Errorf("name %q is not a valid slug (use letters, digits, and '-'; no leading/trailing '-')", s)
 	}
 	return nil
 }

@@ -152,9 +152,17 @@ func TestMember_Validate_ReservedName_Human(t *testing.T) {
 
 func TestMember_Validate_BadSlugName(t *testing.T) {
 	m := fullMember()
-	m.Name = "Alice"
+	m.Name = "-alice"
 	if err := m.Validate(); err == nil {
-		t.Error("want error for uppercase name")
+		t.Error("want error for leading-dash name")
+	}
+}
+
+func TestMember_Validate_MixedCaseName(t *testing.T) {
+	m := fullMember()
+	m.Name = "Alice"
+	if err := m.Validate(); err != nil {
+		t.Errorf("mixed-case name should be valid, got %v", err)
 	}
 }
 

@@ -9,12 +9,12 @@ import (
 // without pulling the config package's heavier validation surface into
 // the TUI. Mismatches will be caught again at config.SaveMember time
 // anyway; this is just for fast inline feedback.
-var slugRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
+var slugRe = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$`)
 
 // validateSlug is a step.Validate function.
 func validateSlug(s string) error {
 	if !slugRe.MatchString(s) {
-		return fmt.Errorf("use lowercase letters, digits, and '-' (no leading/trailing '-')")
+		return fmt.Errorf("use letters, digits, and '-' (no leading/trailing '-')")
 	}
 	if s == "human" {
 		return fmt.Errorf("%q is reserved", s)

@@ -138,10 +138,10 @@ func TestParseMentions_EmailNotMatched(t *testing.T) {
 	}
 }
 
-func TestParseMentions_UppercaseNotMatched(t *testing.T) {
+func TestParseMentions_MixedCaseMatched(t *testing.T) {
 	got := ParseMentions("hey @Alice")
-	if len(got) != 0 {
-		t.Errorf("want no mentions for uppercase @Alice, got %v", got)
+	if !eqStrSlice(got, []string{"Alice"}) {
+		t.Errorf("want [Alice], got %v", got)
 	}
 }
 
