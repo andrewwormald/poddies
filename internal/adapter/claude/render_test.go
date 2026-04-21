@@ -41,7 +41,7 @@ func demoPod() config.Pod {
 
 func TestRenderSystemPrompt_IncludesCoreFields(t *testing.T) {
 	got := RenderSystemPrompt(alice(), demoPod(), []config.Member{alice(), bob()})
-	for _, want := range []string{"alice", "Staff Engineer", "demo", "Pragmatic, terse", "alice: Staff Engineer (you)", "bob: Senior Engineer", "Lead: human"} {
+	for _, want := range []string{"alice", "Staff Engineer", "demo", "Pragmatic, terse", "alice(Staff Engineer)", "bob(Senior Engineer)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
@@ -74,11 +74,11 @@ func TestRenderSystemPrompt_SystemPromptExtra_Appended(t *testing.T) {
 }
 
 func TestRenderUserPrompt_EmptyThread(t *testing.T) {
-	got := RenderUserPrompt(alice(), nil)
-	if !strings.Contains(got, "thread is empty") {
+	got := RenderUserPrompt(alice(), nil, "")
+	if !strings.Contains(got, "Thread empty.") {
 		t.Errorf("want empty-thread note, got:\n%s", got)
 	}
-	if !strings.Contains(got, "You are alice") {
+	if !strings.Contains(got, "Respond as alice") {
 		t.Errorf("want CTA for alice, got:\n%s", got)
 	}
 }
@@ -89,21 +89,15 @@ func TestRenderUserPrompt_RendersAllEventTypes(t *testing.T) {
 		{Type: thread.EventHuman, From: "human", Body: "kick off", TS: ts},
 		{Type: thread.EventMessage, From: "alice", Body: "hi @bob", TS: ts},
 		{Type: thread.EventSystem, Body: "routed to alice", TS: ts},
-		{Type: thread.EventPermissionRequest, From: "alice", Action: "run_shell", TS: ts},
-		{Type: thread.EventPermissionGrant, From: "human", RequestID: "r1", TS: ts},
-		{Type: thread.EventPermissionDeny, From: "human", RequestID: "r2", TS: ts},
 		{Type: "future_type", Body: "unknown payload", TS: ts},
 	}
-	got := RenderUserPrompt(alice(), events)
+	got := RenderUserPrompt(alice(), events, "")
 	for _, want := range []string{
 		"[human] kick off",
 		"[alice] hi @bob",
 		"[system] routed to alice",
-		"[permission_request from alice]",
-		"[permission_grant by human for r1]",
-		"[permission_deny by human for r2]",
-		"[unknown:future_type]",
-		"You are alice",
+		"[future_type] unknown payload",
+		"Respond as alice",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -112,7 +106,7 @@ func TestRenderUserPrompt_RendersAllEventTypes(t *testing.T) {
 }
 
 func TestRenderUserPrompt_MessageWithoutFrom_RendersPlaceholder(t *testing.T) {
-	got := RenderUserPrompt(alice(), []thread.Event{{Type: thread.EventMessage, Body: "mystery"}})
+	got := RenderUserPrompt(alice(), []thread.Event{{Type: thread.EventMessage, Body: "mystery"}}, "")
 	if !strings.Contains(got, "[?]") {
 		t.Errorf("expected [?] placeholder, got:\n%s", got)
 	}
@@ -126,7 +120,7 @@ func TestRender_Golden(t *testing.T) {
 	usr := RenderUserPrompt(alice(), []thread.Event{
 		{Type: thread.EventHuman, From: "human", Body: "kick off the investigation", TS: ts},
 		{Type: thread.EventMessage, From: "bob", Body: "@alice can you take the first look?", TS: ts},
-	})
+	}, "")
 	got := []byte("=== SYSTEM ===\n" + sys + "\n=== USER ===\n" + usr)
 
 	path := "testdata/golden/render_full.txt"

@@ -122,7 +122,7 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 	} else {
 		systemPrompt = RenderSystemPrompt(req.Member, req.Pod, roster)
 	}
-	userPrompt := RenderUserPrompt(req.Member, req.Thread)
+	userPrompt := RenderUserPrompt(req.Member, req.Thread, req.DispatchInstruction)
 	if req.Role == adapter.RoleChiefOfStaff {
 		// Give the CoS a call-to-action addressed to itself rather than
 		// to a zero-value member name.
@@ -280,6 +280,7 @@ func BuildArgs(model, systemPrompt string) []string {
 		"-p", "-", // read user prompt from stdin
 		"--output-format", "json",
 		"--model", model,
+		"--permission-mode", "acceptEdits",
 	}
 	if systemPrompt != "" {
 		args = append(args, "--append-system-prompt", systemPrompt)
@@ -294,6 +295,7 @@ func BuildStreamArgs(model, systemPrompt string) []string {
 		"-p", "-",
 		"--output-format", "stream-json",
 		"--model", model,
+		"--permission-mode", "acceptEdits",
 	}
 	if systemPrompt != "" {
 		args = append(args, "--append-system-prompt", systemPrompt)

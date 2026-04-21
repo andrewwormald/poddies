@@ -13,6 +13,7 @@ import (
 	"github.com/andrewwormald/poddies/internal/adapter"
 	"github.com/andrewwormald/poddies/internal/adapter/mock"
 	"github.com/andrewwormald/poddies/internal/cli"
+	"github.com/andrewwormald/poddies/internal/config"
 	"github.com/andrewwormald/poddies/internal/orchestrator"
 	"github.com/andrewwormald/poddies/internal/thread"
 )
@@ -62,6 +63,18 @@ func TestE2E_RunCommand_AppendsTurnToThread(t *testing.T) {
 		"--model", "local-m",
 		"--effort", "high",
 	)
+
+	// Disable CoS for scripted mock tests.
+	root := filepath.Join(cwd, ".poddies")
+	pdir := filepath.Join(root, "pods", "demo")
+	p, err := config.LoadPod(pdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.ChiefOfStaff.Enabled = false
+	if err := config.SavePod(pdir, p); err != nil {
+		t.Fatal(err)
+	}
 
 	// 4: scripted mock for the run command
 	m := mock.New(mock.WithScript(mock.ScriptedResponse{

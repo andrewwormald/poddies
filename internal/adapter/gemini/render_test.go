@@ -40,19 +40,15 @@ func demoPod() config.Pod {
 }
 
 func TestRenderPrompt_IncludesAllSections(t *testing.T) {
-	got := RenderPrompt(alice(), demoPod(), []config.Member{alice(), bob()}, nil)
+	got := RenderPrompt(alice(), demoPod(), []config.Member{alice(), bob()}, nil, "")
 	for _, want := range []string{
 		"---- SYSTEM ----",
 		"---- THREAD ----",
-		"---- YOUR TURN ----",
+		"---- GO ----",
 		"alice",
 		"Staff Engineer",
 		"demo",
 		"Pragmatic, terse",
-		"alice: Staff Engineer (you)",
-		"bob: Senior Engineer",
-		"Lead: human",
-		"(empty)",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -61,7 +57,7 @@ func TestRenderPrompt_IncludesAllSections(t *testing.T) {
 }
 
 func TestRenderPrompt_EmptyRoster_OmitsSection(t *testing.T) {
-	got := RenderPrompt(alice(), demoPod(), nil, nil)
+	got := RenderPrompt(alice(), demoPod(), nil, nil, "")
 	if strings.Contains(got, "Pod members:") {
 		t.Errorf("should omit member list when roster is empty:\n%s", got)
 	}
@@ -70,7 +66,7 @@ func TestRenderPrompt_EmptyRoster_OmitsSection(t *testing.T) {
 func TestRenderPrompt_SystemPromptExtra_Appended(t *testing.T) {
 	m := alice()
 	m.SystemPromptExtra = "Prefer short answers."
-	got := RenderPrompt(m, demoPod(), nil, nil)
+	got := RenderPrompt(m, demoPod(), nil, nil, "")
 	if !strings.Contains(got, "Prefer short answers.") {
 		t.Errorf("system_prompt_extra missing:\n%s", got)
 	}
@@ -82,20 +78,14 @@ func TestRenderPrompt_RendersAllEventTypes(t *testing.T) {
 		{Type: thread.EventHuman, From: "human", Body: "kick off", TS: ts},
 		{Type: thread.EventMessage, From: "alice", Body: "hi @bob", TS: ts},
 		{Type: thread.EventSystem, Body: "routed to alice", TS: ts},
-		{Type: thread.EventPermissionRequest, From: "alice", Action: "run_shell", TS: ts},
-		{Type: thread.EventPermissionGrant, From: "human", RequestID: "r1", TS: ts},
-		{Type: thread.EventPermissionDeny, From: "human", RequestID: "r2", TS: ts},
 		{Type: "future_type", Body: "unknown payload", TS: ts},
 	}
-	got := RenderPrompt(alice(), demoPod(), nil, events)
+	got := RenderPrompt(alice(), demoPod(), nil, events, "")
 	for _, want := range []string{
 		"[human] kick off",
 		"[alice] hi @bob",
 		"[system] routed to alice",
-		"[permission_request from alice]",
-		"[permission_grant by human for r1]",
-		"[permission_deny by human for r2]",
-		"[unknown:future_type]",
+		"[future_type] unknown payload",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -106,7 +96,7 @@ func TestRenderPrompt_RendersAllEventTypes(t *testing.T) {
 func TestRenderPrompt_MessageWithoutFrom_RendersPlaceholder(t *testing.T) {
 	got := RenderPrompt(alice(), demoPod(), nil, []thread.Event{
 		{Type: thread.EventMessage, Body: "mystery"},
-	})
+	}, "")
 	if !strings.Contains(got, "[?]") {
 		t.Errorf("expected [?] placeholder, got:\n%s", got)
 	}
@@ -119,7 +109,7 @@ func TestRenderPrompt_Golden(t *testing.T) {
 	got := []byte(RenderPrompt(alice(), demoPod(), []config.Member{alice(), bob()}, []thread.Event{
 		{Type: thread.EventHuman, From: "human", Body: "kick off the investigation", TS: ts},
 		{Type: thread.EventMessage, From: "bob", Body: "@alice can you take the first look?", TS: ts},
-	}))
+	}, ""))
 	path := "testdata/golden/render_full.txt"
 	if *updateGolden {
 		if err := os.MkdirAll("testdata/golden", 0o700); err != nil {

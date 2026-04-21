@@ -183,9 +183,9 @@ func (a *App) dumpPrompt(root, pod, memberName string, log *thread.Log) error {
 		fmt.Fprintln(a.Out, "--- SYSTEM ---")
 		fmt.Fprintln(a.Out, claude.RenderSystemPrompt(*member, *podCfg, roster))
 		fmt.Fprintln(a.Out, "--- USER ---")
-		fmt.Fprintln(a.Out, claude.RenderUserPrompt(*member, events))
+		fmt.Fprintln(a.Out, claude.RenderUserPrompt(*member, events, ""))
 	case config.AdapterGemini:
-		fmt.Fprintln(a.Out, gemini.RenderPrompt(*member, *podCfg, roster, events))
+		fmt.Fprintln(a.Out, gemini.RenderPrompt(*member, *podCfg, roster, events, ""))
 	case config.AdapterMock:
 		fmt.Fprintln(a.Out, "(mock adapter has no prompt — it returns canned responses)")
 	default:

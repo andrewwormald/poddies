@@ -11,20 +11,18 @@ import (
 func TestRenderChiefOfStaffSystemPrompt_IdentifiesCoS(t *testing.T) {
 	cos := config.ChiefOfStaff{Enabled: true, Name: "sam"}
 	got := RenderChiefOfStaffSystemPrompt(cos, demoPod(), nil)
-	for _, want := range []string{"sam", "chief-of-staff", "demo", "Lead: human"} {
+	for _, want := range []string{"sam", "dispatcher", "demo", "Lead: human"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q:\n%s", want, got)
 		}
 	}
 }
 
-func TestRenderChiefOfStaffSystemPrompt_IncludesSkills(t *testing.T) {
-	m := alice()
-	m.Skills = []string{"go", "distributed-systems"}
+func TestRenderChiefOfStaffSystemPrompt_IncludesRoster(t *testing.T) {
 	cos := config.ChiefOfStaff{Enabled: true, Name: "sam"}
-	got := RenderChiefOfStaffSystemPrompt(cos, demoPod(), []config.Member{m})
-	if !strings.Contains(got, "skills: go, distributed-systems") {
-		t.Errorf("skills missing from roster:\n%s", got)
+	got := RenderChiefOfStaffSystemPrompt(cos, demoPod(), []config.Member{alice()})
+	if !strings.Contains(got, "alice(") {
+		t.Errorf("roster missing alice:\n%s", got)
 	}
 }
 
@@ -41,10 +39,7 @@ func TestRenderUserPromptForCoS_UsesCoSName(t *testing.T) {
 	got := RenderUserPromptForCoS(cos, []thread.Event{
 		{Type: thread.EventHuman, Body: "help?"},
 	})
-	if !strings.Contains(got, "You are sam, the chief-of-staff") {
-		t.Errorf("CTA should name sam:\n%s", got)
-	}
-	if !strings.Contains(got, "answer directly") {
-		t.Errorf("gray-area directive missing:\n%s", got)
+	if !strings.Contains(got, "Dispatch") {
+		t.Errorf("dispatch CTA missing:\n%s", got)
 	}
 }

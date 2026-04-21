@@ -52,6 +52,7 @@ func TestE2E_MultiTurn_Loop(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.Lead = "alice"
+	p.ChiefOfStaff.Enabled = false // scripted mock doesn't handle CoS turns
 	if err := config.SavePod(podDir, p); err != nil {
 		t.Fatal(err)
 	}

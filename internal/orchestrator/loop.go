@@ -42,17 +42,31 @@ const DefaultMaxTurns = 16
 const SafetyMaxTurns = 1000
 
 // DefaultContextWindow is the maximum number of thread events sent to a
-// member or CoS per invocation. Capping at a fixed window makes per-turn
-// cost O(1) rather than O(turns); the model still gets the most recent
-// context and the system prompt anchors its role and roster.
-const DefaultContextWindow = 30
+// member per invocation in the non-dispatched (agent-to-agent) path.
+// Capping at a fixed window makes per-turn cost O(1).
+const DefaultContextWindow = 15
 
-// tailEvents returns the last n events from s, or all of s if len(s) ≤ n.
+// cosContextWindow is a tighter window for the CoS dispatcher — it
+// only needs recent messages to make routing decisions, not deep history.
+const cosContextWindow = 10
+
+// tailEvents returns the last n content events from s, filtering out
+// internal events (tool_use, permission_*) that agents don't need.
 func tailEvents(s []thread.Event, n int) []thread.Event {
-	if len(s) <= n {
-		return s
+	// Filter to content events only.
+	var content []thread.Event
+	for _, e := range s {
+		switch e.Type {
+		case thread.EventToolUse, thread.EventPermissionRequest,
+			thread.EventPermissionGrant, thread.EventPermissionDeny:
+			continue
+		}
+		content = append(content, e)
 	}
-	return s[len(s)-n:]
+	if len(content) <= n {
+		return content
+	}
+	return content[len(content)-n:]
 }
 
 // DefaultMilestoneEvery is the default number of member turns between
@@ -95,6 +109,12 @@ type Loop struct {
 	// (human kickoff, member responses, system routing notes). Lets
 	// CLI / TUI callers stream updates without re-reading the log.
 	OnEvent func(thread.Event)
+
+	// OnBreakaway, if non-nil, is called when the CoS requests a
+	// breakaway conversation between agents. The callback should start
+	// the breakaway in a background goroutine. If nil, breakaway
+	// requests from the CoS are silently ignored.
+	OnBreakaway func(spec BreakawaySpec)
 }
 
 // LoopResult summarizes a Loop.Run call.
@@ -253,32 +273,68 @@ func (l *Loop) Run(ctx context.Context) (result LoopResult, err error) {
 			}, nil
 		}
 
-		// Gray-area trigger fires whenever the most recent real event
-		// is a human message the CoS has not yet addressed. Lets the
-		// CoS either route to a member (@mention) or answer directly
-		// when the request doesn't clearly land in anyone's domain.
-		// Shares the one-rescue-per-run budget with unresolved_routing
-		// so a pod configured with both triggers doesn't fire the CoS
-		// twice (gray_area answer → halt → rescue → duplicate).
-		if shouldFireGrayArea(existing, pod.ChiefOfStaff) {
-			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage); err != nil {
+		// --- CoS dispatcher: fires first on human messages ---
+		// The CoS digests the human's intent and dispatches targeted
+		// instructions to agents. Skipped when FirstMember is set (the
+		// user explicitly chose who to invoke).
+		if firstMember == "" && shouldFireGrayArea(existing, pod.ChiefOfStaff) {
+			dispatches, err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage, memberSet)
+			if err != nil {
 				return LoopResult{
 						Events:       appended,
 						StopReason:   LoopError,
 						TurnsRun:     turnsRun,
 						LastDecision: lastDecision,
 					},
-					fmt.Errorf("chief_of_staff gray_area: %w", err)
+					fmt.Errorf("chief_of_staff dispatch: %w", err)
 			}
 			cosRescued = true
 			turnsSinceMilestone = 0
+
+			// Start any breakaway conversations in the background.
+			for _, bs := range dispatches.Breakaways {
+				if l.OnBreakaway != nil {
+					l.OnBreakaway(bs)
+				}
+			}
+
+			// Execute individual dispatches immediately.
+			if len(dispatches.Dispatches) > 0 {
+				for _, d := range dispatches.Dispatches {
+					if err := ctx.Err(); err != nil {
+						break
+					}
+					n, err := l.invokeMemberDispatched(ctx, pod, members, d, existing, emit, meta, &runUsage)
+					if err != nil {
+						return LoopResult{
+								Events:       appended,
+								StopReason:   LoopError,
+								TurnsRun:     turnsRun + n,
+								LastDecision: lastDecision,
+							},
+							fmt.Errorf("dispatch %s: %w", d.Member, err)
+					}
+					turnsRun += n
+					turnsSinceMilestone += n
+
+					if thread.HasPendingPermissions(existing) {
+						return LoopResult{
+							Events:     appended,
+							StopReason: LoopPendingPermission,
+							TurnsRun:   turnsRun,
+						}, nil
+					}
+				}
+				continue
+			}
+			// No dispatches — CoS answered directly. Continue loop for
+			// any @mentions in its response via normal routing.
 			continue
 		}
 
-		// Milestone trigger fires before routing, once we have at least
-		// one member turn under our belt.
+		// Milestone trigger fires before routing.
 		if turnsRun > 0 && turnsSinceMilestone >= milestoneEvery && hasTrigger(pod.ChiefOfStaff, config.TriggerMilestone) {
-			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage); err != nil {
+			if _, err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage, memberSet); err != nil {
 				return LoopResult{
 						Events:       appended,
 						StopReason:   LoopError,
@@ -298,7 +354,7 @@ func (l *Loop) Run(ctx context.Context) (result LoopResult, err error) {
 				Member: firstMember,
 				Reason: "first-member override: " + firstMember,
 			}
-			firstMember = "" // consume, regardless of which path handles it
+			firstMember = "" // consume
 		} else {
 			cosName := ""
 			if pod.ChiefOfStaff.Enabled {
@@ -308,13 +364,10 @@ func (l *Loop) Run(ctx context.Context) (result LoopResult, err error) {
 		}
 		lastDecision = decision
 		if decision.Action == ActionHalt {
-			// Unresolved-routing rescue: give the chief-of-staff one
-			// chance per halt to break the quiescence. If CoS also fails
-			// to produce a routable response, the next Route halts again
-			// and we exit cleanly.
 			if !cosRescued && hasTrigger(pod.ChiefOfStaff, config.TriggerUnresolvedRouting) {
 				cosRescued = true
-				if err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage); err != nil {
+				dispatches, err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage, memberSet)
+				if err != nil {
 					return LoopResult{
 							Events:       appended,
 							StopReason:   LoopError,
@@ -323,11 +376,37 @@ func (l *Loop) Run(ctx context.Context) (result LoopResult, err error) {
 						},
 						fmt.Errorf("chief_of_staff rescue: %w", err)
 				}
-				// Reset the milestone counter so the next member turn
-				// doesn't double-fire (rescue + milestone). Without this
-				// reset a pod with both triggers configured would see
-				// two CoS invocations in quick succession the moment the
-				// rescued turn lands on a milestone boundary.
+				for _, bs := range dispatches.Breakaways {
+					if l.OnBreakaway != nil {
+						l.OnBreakaway(bs)
+					}
+				}
+				if len(dispatches.Dispatches) > 0 {
+					for _, d := range dispatches.Dispatches {
+						if err := ctx.Err(); err != nil {
+							break
+						}
+						n, err := l.invokeMemberDispatched(ctx, pod, members, d, existing, emit, meta, &runUsage)
+						if err != nil {
+							return LoopResult{
+									Events:       appended,
+									StopReason:   LoopError,
+									TurnsRun:     turnsRun + n,
+									LastDecision: decision,
+								},
+								fmt.Errorf("dispatch rescue %s: %w", d.Member, err)
+						}
+						turnsRun += n
+						turnsSinceMilestone += n
+						if thread.HasPendingPermissions(existing) {
+							return LoopResult{
+								Events:     appended,
+								StopReason: LoopPendingPermission,
+								TurnsRun:   turnsRun,
+							}, nil
+						}
+					}
+				}
 				turnsSinceMilestone = 0
 				continue
 			}
@@ -339,12 +418,9 @@ func (l *Loop) Run(ctx context.Context) (result LoopResult, err error) {
 			}, nil
 		}
 
-		// If Route picked the CoS (via @mention), detour through the
-		// CoS invocation path instead of treating it as a member turn.
-		// Consumes the rescue budget so a subsequent Route halt doesn't
-		// also fire unresolved_routing — the CoS has already had its say.
+		// If Route picked the CoS (via @mention), detour through CoS.
 		if pod.ChiefOfStaff.Enabled && decision.Member == pod.ChiefOfStaff.ResolvedName() {
-			if err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage); err != nil {
+			if _, err := l.invokeChiefOfStaff(ctx, pod, existing, emit, meta, &runUsage, memberSet); err != nil {
 				return LoopResult{
 						Events:       appended,
 						StopReason:   LoopError,
@@ -551,16 +627,25 @@ func shouldFireGrayArea(events []thread.Event, cos config.ChiefOfStaff) bool {
 // both the milestone trigger path and the unresolved-routing rescue
 // path share identical semantics. Also records token usage + session
 // ID into the thread metadata passed in.
-func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events []thread.Event, emit func(thread.Event), meta *thread.Meta, runUsage *adapter.Usage) error {
+// invokeChiefOfStaff invokes the CoS and returns any dispatch instructions
+// parsed from its response. Returns nil dispatches when the CoS answered
+// directly without routing.
+func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events []thread.Event, emit func(thread.Event), meta *thread.Meta, runUsage *adapter.Usage, memberSet map[string]struct{}) (DispatchResult, error) {
 	cos := pod.ChiefOfStaff
 	a, err := l.AdapterLookup(string(cos.Adapter))
 	if err != nil {
-		return fmt.Errorf("resolve adapter %q: %w", cos.Adapter, err)
+		return DispatchResult{}, fmt.Errorf("resolve adapter %q: %w", cos.Adapter, err)
 	}
 	cosKey := cos.ResolvedName()
 
-	// Sliding-window context: same policy as member invocations.
-	invokeThread := tailEvents(events, DefaultContextWindow)
+	// Tight context window for routing decisions — the CoS sees the
+	// roster in its system prompt and only needs recent messages.
+	invokeThread := tailEvents(events, cosContextWindow)
+
+	var roster []string
+	for name := range memberSet {
+		roster = append(roster, name)
+	}
 
 	resp, err := a.Invoke(ctx, adapter.InvokeRequest{
 		Role:         adapter.RoleChiefOfStaff,
@@ -568,13 +653,13 @@ func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events [
 		Pod:          *pod,
 		Thread:       invokeThread,
 		Effort:       config.EffortLow,
+		Roster:       roster,
 	})
 	if err != nil {
-		return fmt.Errorf("invoke: %w", err)
+		return DispatchResult{}, fmt.Errorf("invoke: %w", err)
 	}
 	meta.RecordTurn(cosKey, resp.SessionID, resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.TotalCostUSD, resp.Usage.DurationMs)
 	*runUsage = runUsage.Add(resp.Usage)
-	// Record where the next CoS delta starts (before appending response).
 	if meta.LastEventIdx == nil {
 		meta.LastEventIdx = map[string]int{}
 	}
@@ -582,7 +667,6 @@ func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events [
 	if saveErr := thread.SaveMeta(l.Log.Path, meta); saveErr != nil && l.OnEvent != nil {
 		l.OnEvent(thread.Event{Type: thread.EventSystem, Body: "warning: meta save failed: " + saveErr.Error()})
 	}
-	// Emit any tool-use events before the CoS message.
 	for _, tc := range resp.ToolCalls {
 		e, err := l.Log.Append(thread.Event{
 			Type:   thread.EventToolUse,
@@ -591,19 +675,13 @@ func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events [
 			Body:   tc.Input,
 		})
 		if err != nil {
-			return fmt.Errorf("append CoS tool_use: %w", err)
+			return DispatchResult{}, fmt.Errorf("append CoS tool_use: %w", err)
 		}
 		emit(e)
 	}
 
-	// Skip empty-body responses entirely. Appending an empty message
-	// event would poison the thread: Route's last-non-meta-event lookup
-	// would return the empty event, which has no mentions, halting the
-	// loop forever. The CoS simply having nothing to add is a valid
-	// outcome — it just means the loop continues via whatever the last
-	// real turn was.
 	if resp.Body == "" {
-		return nil
+		return DispatchResult{}, nil
 	}
 	e, err := l.Log.Append(thread.Event{
 		Type: thread.EventMessage,
@@ -611,18 +689,114 @@ func (l *Loop) invokeChiefOfStaff(ctx context.Context, pod *config.Pod, events [
 		Body: resp.Body,
 	})
 	if err != nil {
-		return fmt.Errorf("append CoS event: %w", err)
+		return DispatchResult{}, fmt.Errorf("append CoS event: %w", err)
 	}
 	emit(e)
-	// CoS response is now in the thread; advance the index so the next
-	// delta starts past it (the CoS's own message is already in its
-	// server-side session history via --resume).
 	meta.LastEventIdx[cosKey]++
 	if saveErr := thread.SaveMeta(l.Log.Path, meta); saveErr != nil && l.OnEvent != nil {
 		l.OnEvent(thread.Event{Type: thread.EventSystem, Body: "warning: meta save failed: " + saveErr.Error()})
 	}
-	return nil
+
+	// Parse dispatch instructions from the CoS response.
+	result := ParseDispatch(resp.Body, memberSet)
+	return result, nil
 }
+
+// invokeMemberDispatched invokes a single member with a targeted dispatch
+// instruction from the CoS. Returns the number of turns consumed (1 on
+// success) and any error.
+func (l *Loop) invokeMemberDispatched(
+	ctx context.Context,
+	pod *config.Pod,
+	members map[string]*config.Member,
+	d Dispatch,
+	existing []thread.Event,
+	emit func(thread.Event),
+	meta *thread.Meta,
+	runUsage *adapter.Usage,
+) (int, error) {
+	member, ok := members[d.Member]
+	if !ok {
+		return 0, fmt.Errorf("unknown member %q", d.Member)
+	}
+	a, err := l.AdapterLookup(string(member.Adapter))
+	if err != nil {
+		return 0, fmt.Errorf("resolve adapter %q: %w", member.Adapter, err)
+	}
+
+	effort := member.Effort
+	if l.EffortOverride != "" {
+		effort = l.EffortOverride
+	}
+
+	// Dispatched members get minimal context (last 5 events) since the
+	// dispatch instruction is their primary task.
+	invokeThread := tailEvents(existing, dispatchContextWindow)
+
+	resp, err := a.Invoke(ctx, adapter.InvokeRequest{
+		Role:                adapter.RoleMember,
+		Member:              *member,
+		Pod:                 *pod,
+		Thread:              invokeThread,
+		Effort:              effort,
+		DispatchInstruction: d.Instruction,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("invoke: %w", err)
+	}
+	meta.RecordTurn(member.Name, resp.SessionID, resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.TotalCostUSD, resp.Usage.DurationMs)
+	*runUsage = runUsage.Add(resp.Usage)
+
+	for _, tc := range resp.ToolCalls {
+		e, err := l.Log.Append(thread.Event{
+			Type:   thread.EventToolUse,
+			From:   member.Name,
+			Action: tc.Name,
+			Body:   tc.Input,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("append tool_use: %w", err)
+		}
+		emit(e)
+	}
+
+	// Append permission requests before the message body so the loop
+	// halts with pending permissions on the next iteration.
+	for _, pr := range resp.PermissionRequests {
+		e, err := l.Log.Append(thread.Event{
+			Type:    thread.EventPermissionRequest,
+			From:    member.Name,
+			Action:  pr.Action,
+			Payload: pr.Payload,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("append permission_request: %w", err)
+		}
+		emit(e)
+	}
+
+	if resp.Body != "" {
+		e, err := l.Log.Append(thread.Event{
+			Type: thread.EventMessage,
+			From: member.Name,
+			Body: resp.Body,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("append message: %w", err)
+		}
+		emit(e)
+	}
+
+	if saveErr := thread.SaveMeta(l.Log.Path, meta); saveErr != nil && l.OnEvent != nil {
+		l.OnEvent(thread.Event{Type: thread.EventSystem, Body: "warning: meta save failed: " + saveErr.Error()})
+	}
+	return 1, nil
+}
+
+// dispatchContextWindow is the number of recent events sent to a
+// dispatched member. Kept small since the dispatch instruction is the
+// primary task — context is just for continuity.
+const dispatchContextWindow = 5
 
 // loadMemberRoster returns (names, name→*Member) for the pod. Names are
 // sorted for stable iteration.

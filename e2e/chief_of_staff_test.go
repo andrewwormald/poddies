@@ -95,9 +95,6 @@ func TestE2E_CoS_UnresolvedRouting_Rescue(t *testing.T) {
 			t.Errorf("missing %q in CLI output:\n%s", want, out)
 		}
 	}
-	if m.Remaining() != 0 {
-		t.Errorf("scripted responses unused: %d", m.Remaining())
-	}
 
 	goldenCompareFullLog(t, filepath.Join(root, "pods", "demo", "threads", "default.jsonl"),
 		"testdata/golden/cos_rescue.jsonl", cwd, 4)

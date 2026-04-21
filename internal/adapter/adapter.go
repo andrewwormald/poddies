@@ -73,6 +73,17 @@ type InvokeRequest struct {
 	// (thinking budget, reasoning_effort, etc.). Ignored if the
 	// adapter doesn't expose a comparable knob.
 	Effort config.Effort
+
+	// DispatchInstruction, when non-empty, is a targeted task from the
+	// CoS dispatcher. The adapter uses this as the primary prompt
+	// instead of deriving intent from the full thread. Only set for
+	// dispatched member invocations.
+	DispatchInstruction string
+
+	// Roster lists the names of all pod members. Used by the mock
+	// adapter's auto CoS dispatch to know who to route to. Real
+	// adapters get this from the rendered system prompt.
+	Roster []string
 }
 
 // PermissionRequest describes a structured ask from an agent that needs

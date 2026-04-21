@@ -35,6 +35,7 @@ func TestE2E_PermissionFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.Lead = "alice"
+	p.ChiefOfStaff.Enabled = false
 	if err := config.SavePod(pdir, p); err != nil {
 		t.Fatal(err)
 	}

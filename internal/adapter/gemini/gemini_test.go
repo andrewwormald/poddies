@@ -85,7 +85,7 @@ func TestInvoke_PassesPromptOnStdin(t *testing.T) {
 		t.Fatal(err)
 	}
 	stdin := string(r.stdin)
-	for _, want := range []string{"---- SYSTEM ----", "---- THREAD ----", "---- YOUR TURN ----", "You are alice"} {
+	for _, want := range []string{"---- SYSTEM ----", "---- THREAD ----", "---- GO ----"} {
 		if !strings.Contains(stdin, want) {
 			t.Errorf("stdin missing %q: got:\n%s", want, stdin)
 		}

@@ -11,7 +11,7 @@ import (
 func TestRenderChiefOfStaffPrompt_IdentifiesCoS(t *testing.T) {
 	cos := config.ChiefOfStaff{Enabled: true, Name: "sam"}
 	got := RenderChiefOfStaffPrompt(cos, demoPod(), nil, nil)
-	for _, want := range []string{"sam", "chief-of-staff", "demo", "Lead: human", "---- YOUR TURN ----"} {
+	for _, want := range []string{"sam", "dispatcher", "demo", "---- DISPATCH ----"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q:\n%s", want, got)
 		}
@@ -32,7 +32,7 @@ func TestRenderChiefOfStaffPrompt_IncludesSkills(t *testing.T) {
 	m.Skills = []string{"go", "cli"}
 	cos := config.ChiefOfStaff{Enabled: true, Name: "sam"}
 	got := RenderChiefOfStaffPrompt(cos, demoPod(), []config.Member{m}, nil)
-	if !strings.Contains(got, "skills: go, cli") {
-		t.Errorf("skills missing:\n%s", got)
+	if !strings.Contains(got, "alice(") {
+		t.Errorf("roster missing alice:\n%s", got)
 	}
 }

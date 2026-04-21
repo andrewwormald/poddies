@@ -24,7 +24,7 @@ func TestDumpPrompt_Claude(t *testing.T) {
 	if err := runCmd(t, a, "run", "--pod", "demo", "--member", "alice", "--dump-prompt"); err != nil {
 		t.Fatalf("run --dump-prompt: %v", err)
 	}
-	for _, want := range []string{"dump-prompt", "--- SYSTEM ---", "--- USER ---", "You are", "hi there", "Be concise"} {
+	for _, want := range []string{"dump-prompt", "--- SYSTEM ---", "--- USER ---", "Respond as", "hi there", "Be concise"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("dump output missing %q:\n%s", want, out.String())
 		}
@@ -43,7 +43,7 @@ func TestDumpPrompt_Gemini(t *testing.T) {
 	if err := runCmd(t, a, "run", "--pod", "demo", "--member", "alice", "--dump-prompt"); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"dump-prompt", "---- SYSTEM ----", "---- YOUR TURN ----", "You are"} {
+	for _, want := range []string{"dump-prompt", "---- SYSTEM ----", "---- GO ----"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("dump output missing %q:\n%s", want, out.String())
 		}

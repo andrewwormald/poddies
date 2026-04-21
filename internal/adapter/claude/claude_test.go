@@ -87,7 +87,7 @@ func TestInvoke_PassesUserPromptOnStdin(t *testing.T) {
 	if _, err := a.Invoke(context.Background(), validMemberReq()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(r.stdin), "You are alice") {
+	if !strings.Contains(string(r.stdin), "Respond as alice") {
 		t.Errorf("stdin missing user prompt CTA; got %q", r.stdin)
 	}
 }

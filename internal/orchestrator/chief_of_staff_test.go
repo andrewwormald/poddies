@@ -157,7 +157,7 @@ func TestLoop_UnresolvedRouting_CoS_Rescues(t *testing.T) {
 		t.Errorf("want rescue at index 2 from sam, got %s", res.Events[2].From)
 	}
 	if res.Events[3].From != "bob" {
-		t.Errorf("want bob follow-up at index 3, got %s", res.Events[3].From)
+		t.Errorf("want bob at index 3, got %s", res.Events[3].From)
 	}
 }
 

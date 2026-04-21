@@ -137,7 +137,12 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 				Effort:         string(req.Effort),
 				PriorSessionID: req.PriorSessionID,
 			})
-			body := autoResponse(memberName, req.Thread)
+			var body string
+			if req.Role == adapter.RoleChiefOfStaff {
+				body = autoCoSDispatch(req)
+			} else {
+				body = autoResponse(memberName, req.Thread)
+			}
 			// Synthesize plausible-looking token counts so the TUI's
 			// burn-rate display doesn't read as zeros against the mock.
 			in := 4 * len(renderThreadForAssert(req.Thread)) / 3
@@ -204,6 +209,33 @@ func renderThreadForAssert(events []thread.Event) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// autoCoSDispatch generates a mock CoS dispatch that routes to members
+// mentioned in the last message. If none are mentioned, it collects all
+// unique "From" names seen in the thread (i.e. known members).
+func autoCoSDispatch(req adapter.InvokeRequest) string {
+	// Find @mentions in the last human/message event.
+	var mentions []string
+	for i := len(req.Thread) - 1; i >= 0; i-- {
+		e := req.Thread[i]
+		if e.Type == thread.EventHuman || e.Type == thread.EventMessage {
+			mentions = e.Mentions
+			break
+		}
+	}
+	// If no explicit mentions, dispatch to all roster members.
+	if len(mentions) == 0 {
+		mentions = req.Roster
+	}
+	if len(mentions) == 0 {
+		return "(mock) no members to dispatch to"
+	}
+	var lines []string
+	for _, m := range mentions {
+		lines = append(lines, "@"+m+" Please respond to the latest message.")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // autoResponse builds a canned reply for Auto-mode invocations. It

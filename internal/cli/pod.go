@@ -103,6 +103,12 @@ func CreatePod(root, name string) (*config.Pod, error) {
 	p := &config.Pod{
 		Name: name,
 		Lead: "human",
+		ChiefOfStaff: config.ChiefOfStaff{
+			Enabled:  true,
+			Adapter:  config.AdapterClaude,
+			Model:    "claude-sonnet-4-6",
+			Triggers: []config.Trigger{config.TriggerGrayArea, config.TriggerMilestone, config.TriggerUnresolvedRouting},
+		},
 	}
 	if err := config.SavePod(podDir, p); err != nil {
 		return nil, err

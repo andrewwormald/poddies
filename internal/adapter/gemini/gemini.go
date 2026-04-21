@@ -85,7 +85,7 @@ func (a *Adapter) Invoke(ctx context.Context, req adapter.InvokeRequest) (adapte
 	if req.Role == adapter.RoleChiefOfStaff {
 		prompt = RenderChiefOfStaffPrompt(req.ChiefOfStaff, req.Pod, roster, req.Thread)
 	} else {
-		prompt = RenderPrompt(req.Member, req.Pod, roster, req.Thread)
+		prompt = RenderPrompt(req.Member, req.Pod, roster, req.Thread, req.DispatchInstruction)
 	}
 	args := BuildArgs(model)
 

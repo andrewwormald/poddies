@@ -19,6 +19,7 @@ func setupPodWithMember(t *testing.T) (cwd, root, podName, member string) {
 	if _, err := CreatePod(root, "demo"); err != nil {
 		t.Fatal(err)
 	}
+	disableCoS(t, root, "demo")
 	m := config.Member{
 		Name: "alice", Title: "Staff", Adapter: config.AdapterMock,
 		Model: "local-m", Effort: config.EffortHigh,
@@ -29,6 +30,35 @@ func setupPodWithMember(t *testing.T) (cwd, root, podName, member string) {
 	return cwd, root, "demo", "alice"
 }
 
+// patchCoSToMock rewrites the pod's CoS adapter to "mock" so tests that
+// only register a mock adapter can still exercise the dispatch path.
+func patchCoSToMock(t *testing.T, root, pod string) {
+	t.Helper()
+	p, err := config.LoadPod(PodDir(root, pod))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.ChiefOfStaff.Adapter = config.AdapterMock
+	p.ChiefOfStaff.Model = "mock-m"
+	if err := config.SavePod(PodDir(root, pod), p); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// disableCoS turns off the CoS for tests that use scripted mocks and
+// don't want CoS dispatch interfering with their expected turn order.
+func disableCoS(t *testing.T, root, pod string) {
+	t.Helper()
+	p, err := config.LoadPod(PodDir(root, pod))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.ChiefOfStaff.Enabled = false
+	if err := config.SavePod(PodDir(root, pod), p); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // setupPodWithTwoMembers scaffolds demo with alice (lead) and bob.
 func setupPodWithTwoMembers(t *testing.T) (cwd, root string) {
 	t.Helper()
@@ -36,6 +66,7 @@ func setupPodWithTwoMembers(t *testing.T) (cwd, root string) {
 	if _, err := CreatePod(root, "demo"); err != nil {
 		t.Fatal(err)
 	}
+	disableCoS(t, root, "demo")
 	// set lead=alice so human kickoff → lead → alice
 	p, err := config.LoadPod(PodDir(root, "demo"))
 	if err != nil {
@@ -124,6 +155,7 @@ func TestRunCmd_NoMembers_QuiescesImmediately(t *testing.T) {
 	if _, err := CreatePod(root, "demo"); err != nil {
 		t.Fatal(err)
 	}
+	disableCoS(t, root, "demo")
 	m := mock.New()
 	a := appWithMock(cwd, t.TempDir(), m)
 	if err := runCmd(t, a, "run", "--pod", "demo"); err != nil {

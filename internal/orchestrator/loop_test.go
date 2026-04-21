@@ -17,7 +17,7 @@ import (
 )
 
 // scaffoldWithMembers writes a pod with the named mock-backed members.
-// lead can be any of the member names or "human".
+// lead can be any of the member names or "human". CoS is disabled.
 func scaffoldWithMembers(t *testing.T, lead string, names ...string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -40,6 +40,7 @@ func scaffoldWithMembers(t *testing.T, lead string, names ...string) string {
 	}
 	return root
 }
+
 
 // newDeterministicLog creates a thread.Log with monotonic counter-backed
 // IDs/TSes, so tests can reason about event order & count without
@@ -379,4 +380,48 @@ func TestLoadMemberRoster_MissingMembersDir_Empty(t *testing.T) {
 	if len(names) != 0 || len(members) != 0 {
 		t.Errorf("want empty, got %v / %d", names, len(members))
 	}
+}
+
+// TestLoop_CoS_Dispatch_HelloTeam verifies that "hey team" with CoS
+// enabled dispatches to all members and each responds.
+func TestLoop_CoS_Dispatch_HelloTeam(t *testing.T) {
+	root := scaffoldWithCoS(t, "human", "cos",
+		[]config.Trigger{config.TriggerGrayArea, config.TriggerUnresolvedRouting},
+		"alice", "bob")
+	m := mock.New(mock.WithAuto(true))
+	log := newDeterministicLog(t, t.TempDir())
+
+	var events []thread.Event
+	loop := &Loop{
+		Root:          root,
+		Pod:           "demo",
+		AdapterLookup: MapLookup(map[string]adapter.Adapter{"mock": m}),
+		Log:           log,
+		HumanMessage:  "hey team",
+		OnEvent: func(e thread.Event) {
+			events = append(events, e)
+		},
+		MaxTurns: 10,
+	}
+	res, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop.Run: %v", err)
+	}
+
+	gotAlice, gotBob := false, false
+	for _, e := range events {
+		if e.Type == thread.EventMessage && e.From == "alice" {
+			gotAlice = true
+		}
+		if e.Type == thread.EventMessage && e.From == "bob" {
+			gotBob = true
+		}
+	}
+	if !gotAlice {
+		t.Error("no response from alice")
+	}
+	if !gotBob {
+		t.Error("no response from bob")
+	}
+	t.Logf("stop=%s turns=%d events=%d", res.StopReason, res.TurnsRun, len(events))
 }
