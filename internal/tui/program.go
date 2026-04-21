@@ -19,14 +19,14 @@ import (
 // on its own.
 func Run(ctx context.Context, opts Options, in io.Reader, out io.Writer) error {
 	if in == nil || out == nil {
-		// tea.NewProgram defaults these to os.Stdin/Stdout.
-		p := tea.NewProgram(NewModel(opts), tea.WithAltScreen())
+		p := tea.NewProgram(NewModel(opts), tea.WithAltScreen(), tea.WithMouseCellMotion())
 		_, err := p.Run()
 		return err
 	}
 	p := tea.NewProgram(
 		NewModel(opts),
 		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
 		tea.WithInput(in),
 		tea.WithOutput(out),
 	)

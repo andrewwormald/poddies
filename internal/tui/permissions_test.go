@@ -52,7 +52,7 @@ func TestRenderPermissionsPane_ShowsRequestDetails(t *testing.T) {
 		makePendingEvent("xyz999", "bob", "write_file"),
 	}
 	out := renderPermissionsPane(pending, 80)
-	for _, want := range []string{"abcdef", "alice", "run_command", "xyz999", "bob", "write_file"} {
+	for _, want := range []string{"alice", "run_command", "bob", "write_file"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("pane missing %q:\n%s", want, out)
 		}
@@ -343,7 +343,7 @@ func TestView_ShowsPermissionPane_WhenPending(t *testing.T) {
 	m := modelWithPending(pending, nil, nil)
 	m, _ = updateAs(m, sizeMsg())
 	out := m.View()
-	for _, want := range []string{"abc123", "alice", "run_tool", "approve", "deny"} {
+	for _, want := range []string{"alice", "run_tool", "approve", "deny"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view missing %q when pending:\n%s", want, out)
 		}

@@ -29,17 +29,23 @@ func renderPermissionsPane(pending []thread.Event, width int) string {
 	b.WriteString(permHeaderStyle.Render(fmt.Sprintf("⚠  %d pending permission request(s)  [a=approve  d=deny  A=approve-all  D=deny-all]", len(pending))))
 	b.WriteByte('\n')
 
-	for _, e := range pending {
-		shortID := e.ID
-		if len(shortID) > 6 {
-			shortID = shortID[:6]
+	for i, e := range pending {
+		num := fmt.Sprintf(" %d.", i+1)
+		av := AvatarFor(e.From)
+		if e.Action == "dispatch" {
+			// Dispatch permission: show agent avatar + task instruction.
+			task := e.Body
+			if len(task) > 80 {
+				task = task[:77] + "..."
+			}
+			b.WriteString(permItemStyle.Render(num) + " " + av.RenderSmall() + " " + permItemStyle.Render(e.From+": ") + task)
+		} else {
+			b.WriteString(permItemStyle.Render(fmt.Sprintf("%s %s  action=%s", num, e.From, e.Action)))
 		}
-		line := fmt.Sprintf("  %s  from=%-12s  action=%s", shortID, e.From, e.Action)
-		b.WriteString(permItemStyle.Render(line))
 		b.WriteByte('\n')
 	}
 
-	hint := permHintStyle.Render("oldest request is acted on first for a/d")
+	hint := permHintStyle.Render("  a=approve  d=deny  A=approve-all  D=deny-all  (oldest first)")
 	b.WriteString(hint)
 	return b.String()
 }
