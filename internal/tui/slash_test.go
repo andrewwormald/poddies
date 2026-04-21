@@ -210,34 +210,30 @@ func TestSlash_Resume_NotWired_Status(t *testing.T) {
 	}
 }
 
-func TestSlash_Resume_NoArg_NoSessions(t *testing.T) {
+func TestSlash_Resume_NoArg_OpensSessionsView(t *testing.T) {
 	m := NewModel(Options{
 		PodName:        "demo",
 		StartLoop:      okStartLoop,
 		OnListSessions: func() []SessionSummary { return nil },
 	})
 	m, _ = submitString(m, "/resume")
-	if !strings.Contains(m.Status(), "no prior sessions") {
-		t.Errorf("want 'no prior sessions', got %q", m.Status())
+	if m.view != ViewSessions {
+		t.Errorf("want ViewSessions, got view=%d", m.view)
 	}
 }
 
-func TestSlash_Resume_NoArg_ShowsList(t *testing.T) {
+func TestSlash_Resume_NoArg_WithSessions_OpensView(t *testing.T) {
 	m := NewModel(Options{
 		PodName:        "demo",
 		StartLoop:      okStartLoop,
 		OnListSessions: sessions,
 	})
 	m, _ = submitString(m, "/resume")
-	// list should appear as a system event in the transcript
-	if len(m.Events()) == 0 {
-		t.Fatal("expected session list event appended to transcript")
+	if m.view != ViewSessions {
+		t.Errorf("want ViewSessions, got view=%d", m.view)
 	}
-	body := m.Events()[len(m.Events())-1].Body
-	for _, want := range []string{"sess-001", "sess-002", "1.", "2."} {
-		if !strings.Contains(body, want) {
-			t.Errorf("list event missing %q:\n%s", want, body)
-		}
+	if m.cursorPos != 0 {
+		t.Errorf("want cursorPos=0, got %d", m.cursorPos)
 	}
 }
 

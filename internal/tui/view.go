@@ -99,10 +99,19 @@ func (m Model) renderHeader() string {
 		parts = append(parts, metaStyle.Render("session: "+short))
 	}
 	if roster := m.currentRoster(); len(roster) > 0 {
-		parts = append(parts, metaStyle.Render("members: "+strings.Join(roster, ", ")))
+		var members []string
+		for _, name := range roster {
+			av := AvatarFor(name)
+			members = append(members, av.RenderSmall()+" "+name)
+		}
+		parts = append(parts, metaStyle.Render("members: ")+strings.Join(members, "  "))
 	}
 	if m.opts.Lead != "" {
-		parts = append(parts, metaStyle.Render("lead: "+m.opts.Lead))
+		lead := m.opts.Lead
+		if lead == "human" {
+			lead = "me"
+		}
+		parts = append(parts, metaStyle.Render("lead: "+lead))
 	}
 	return strings.Join(parts, "  ") + "\n" + metaStyle.Render(strings.Repeat("─", max(m.width, 20)))
 }
@@ -111,7 +120,7 @@ func (m Model) renderFooter() string {
 	divider := metaStyle.Render(strings.Repeat("─", max(m.width, 20)))
 	status := m.statusLine
 	if m.state == StateRunning {
-		status = "running… (input disabled)"
+		status = "running… (type ahead — Enter queues when done)"
 	}
 	if m.lastErr != nil {
 		status = errStyle.Render(status)
@@ -132,7 +141,11 @@ func (m Model) renderFooter() string {
 // accepts it.
 func (m Model) renderInputLine() string {
 	base := m.input.View()
-	ghost, ok := findMentionSuggestion(m.input.Value(), m.currentRoster(), m.opts.CoSName)
+	// Try slash command suggestion first, then @mention.
+	ghost, ok := findSlashSuggestion(m.input.Value())
+	if !ok {
+		ghost, ok = findMentionSuggestion(m.input.Value(), m.currentRoster(), m.opts.CoSName)
+	}
 	if !ok {
 		return base
 	}
@@ -160,37 +173,87 @@ func (m Model) renderUsage() string {
 // renderTranscript formats the event list into the viewport-ready text.
 // Per-user colouring and body wrapping are applied so long responses
 // don't overflow and speakers are visually distinct.
-func renderTranscript(events []thread.Event, cosName string, width int) string {
+func renderTranscript(events []thread.Event, cosName string, width int, avSize AvatarSize, debug bool) string {
 	if len(events) == 0 {
 		return metaStyle.Render("(no events yet — type a message below to kick off)")
 	}
 	var b strings.Builder
 	for _, e := range events {
-		b.WriteString(renderEvent(e, cosName, width))
+		// Hide CoS messages when debug is off.
+		if !debug && cosName != "" && e.From == cosName {
+			continue
+		}
+		b.WriteString(renderEvent(e, cosName, width, avSize))
 		b.WriteByte('\n')
 	}
 	return b.String()
 }
 
-func renderEvent(e thread.Event, cosName string, width int) string {
-	// Body wrap width: give the body most of the terminal, minus a
-	// conservative prefix allowance. We don't try to perfectly align
-	// continuation lines under the first-line content — that would need
-	// rune-width calculation against ANSI escapes. Plain left-column
-	// continuation is good enough for v1 and matches k9s's log pane.
+// renderSpeakerLine renders a chat bubble for a speaker event.
+//
+// Layout (AvatarSmall / AvatarLarge):
+//
+//	(o.o) alice
+//	 ▌ message text here
+//	 ▌ continued on next line
+//
+// The left bar ▌ is coloured with the member's assigned colour.
+// AvatarOff omits the pea face but keeps the coloured bar.
+func renderSpeakerLine(name, cosName string, body string, width int, avSize AvatarSize) string {
+	av := AvatarFor(name)
+	barStyle := lipgloss.NewStyle().Foreground(av.Color)
+	bar := barStyle.Render("▌")
+
+	// Body width accounts for the " ▌ " prefix (3 chars).
+	bubbleWidth := width - 4
+	if bubbleWidth < 20 {
+		bubbleWidth = 20
+	}
+
+	var header string
+	switch avSize {
+	case AvatarLarge:
+		large := av.RenderLarge()
+		// If multi-line (has hat), put name on the face line.
+		if strings.Contains(large, "\n") {
+			parts := strings.SplitN(large, "\n", 2)
+			header = " " + parts[0] + "\n" + parts[1] + " " + styledName(name, cosName)
+		} else {
+			header = large + " " + styledName(name, cosName)
+		}
+	case AvatarSmall:
+		header = av.RenderSmall() + " " + styledName(name, cosName)
+	default:
+		header = styledName(name, cosName)
+	}
+
+	wrapped := wrapText(body, bubbleWidth)
+	var b strings.Builder
+	b.WriteString(header)
+	for _, line := range strings.Split(wrapped, "\n") {
+		b.WriteByte('\n')
+		b.WriteString(" ")
+		b.WriteString(bar)
+		b.WriteString(" ")
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+func renderEvent(e thread.Event, cosName string, width int, avSize AvatarSize) string {
 	bodyWidth := width - 2
 	if bodyWidth < 20 {
 		bodyWidth = 20
 	}
 	switch e.Type {
 	case thread.EventHuman:
-		return styledName("human", cosName) + " " + wrapText(e.Body, bodyWidth)
+		return renderSpeakerLine("me", cosName, e.Body, width, avSize)
 	case thread.EventMessage:
 		from := e.From
 		if from == "" {
 			from = "?"
 		}
-		return styledName(from, cosName) + " " + wrapText(e.Body, bodyWidth)
+		return renderSpeakerLine(from, cosName, e.Body, width, avSize)
 	case thread.EventSystem:
 		return systemStyle.Render("[system] " + wrapText(e.Body, bodyWidth))
 	case thread.EventToolUse:
@@ -204,12 +267,8 @@ func renderEvent(e thread.Event, cosName string, width int) string {
 			body = "-"
 		}
 		return metaStyle.Render(styledName(from, cosName)+" "+label+" "+wrapText(body, bodyWidth))
-	case thread.EventPermissionRequest:
-		return errStyle.Render(fmt.Sprintf("[permission_request from %s] action=%s", e.From, e.Action))
-	case thread.EventPermissionGrant:
-		return systemStyle.Render(fmt.Sprintf("[permission_grant by %s for %s]", e.From, e.RequestID))
-	case thread.EventPermissionDeny:
-		return systemStyle.Render(fmt.Sprintf("[permission_deny by %s for %s]", e.From, e.RequestID))
+	case thread.EventPermissionRequest, thread.EventPermissionGrant, thread.EventPermissionDeny:
+		return "" // shown in the dedicated permissions pane, not the transcript
 	default:
 		return systemStyle.Render(fmt.Sprintf("[%s] %s", e.Type, wrapText(e.Body, bodyWidth)))
 	}

@@ -125,3 +125,10 @@ func (l *Log) Load() ([]Event, error) {
 	}
 	return events, nil
 }
+
+// Truncate empties the log file, discarding all events.
+func (l *Log) Truncate() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return os.Truncate(l.Path, 0)
+}

@@ -51,18 +51,11 @@ func (a *App) launchTUI(ctx context.Context) error {
 		return err
 	}
 
-	// Kick off background cleanup. Async so the TUI doesn't wait on
-	// disk scans before opening; 1-hour timeout per user spec.
-	a.startCleanupGoroutine(root)
-
-	// First iteration: resume the last-active session for this pod if
-	// one is recorded (R2 active-thread tracking). Falls back to a fresh
-	// session when the state file is missing, the session was cleaned up,
-	// or /resume is directing us somewhere specific.
-	lastID, _ := session.LoadLastSession(root, pod) // best-effort; error → empty string
-
+	// Always start with a fresh session on cold launch. Previous
+	// sessions are available via /resume; auto-resuming leaked old
+	// conversation context into new conversations.
 	var resumeTo string
-	firstIteration := true
+	cleanupStarted := false
 	for {
 		var s session.Session
 		if resumeTo != "" {
@@ -70,21 +63,17 @@ func (a *App) launchTUI(ctx context.Context) error {
 				return fmt.Errorf("resume: %w", err)
 			}
 			resumeTo = ""
-		} else if firstIteration && lastID != "" {
-			// Try to reopen where we left off. If the session has since
-			// been cleaned up, fall through to create a new one silently.
-			if s, err = session.Find(root, lastID); err != nil {
-				s, err = session.Create(root, pod)
-				if err != nil {
-					return fmt.Errorf("create session: %w", err)
-				}
-			}
 		} else {
 			if s, err = session.Create(root, pod); err != nil {
 				return fmt.Errorf("create session: %w", err)
 			}
 		}
-		firstIteration = false
+		// Start cleanup AFTER the first session is created to avoid a
+		// race on sessions.toml between Create and CleanupStale.
+		if !cleanupStarted {
+			a.startCleanupGoroutine(root)
+			cleanupStarted = true
+		}
 		log := thread.Open(session.ThreadPath(root, s.ID))
 		if err := log.EnsureFile(); err != nil {
 			return err
@@ -102,9 +91,7 @@ func (a *App) launchTUI(ctx context.Context) error {
 		}
 		if res.switchPodName != "" {
 			pod = res.switchPodName
-			// Reload the last-session record for the new pod so we resume
-			// where the user left off in it.
-			resumeTo, _ = session.LoadLastSession(root, pod)
+			// Fresh session for the new pod — no auto-resume.
 			continue
 		}
 		resumeTo = res.resumeSessionID
@@ -213,6 +200,10 @@ func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *t
 		return launchResult{}, err
 	}
 
+	// breakawaySub receives events from background breakaway conversations.
+	// Capacity matches the main sub channel.
+	breakawaySub := make(chan any, 64)
+
 	start := func(lctx context.Context, kickoff string, onEvent func(thread.Event)) (orchestrator.LoopResult, error) {
 		loop := &orchestrator.Loop{
 			Root:          root,
@@ -221,6 +212,36 @@ func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *t
 			Log:           log,
 			HumanMessage:  kickoff,
 			OnEvent:       onEvent,
+			OnBreakaway: func(spec orchestrator.BreakawaySpec) {
+				// Start the breakaway in a background goroutine.
+				go func() {
+					bLog := thread.Open(filepath.Join(
+						session.Dir(root, sessionID),
+						fmt.Sprintf("breakaway-%s.jsonl", thread.NewID()),
+					))
+					_ = bLog.EnsureFile()
+
+					podDir := PodDir(root, pod)
+					podCfgCopy, _ := config.LoadPod(podDir)
+					memberMap := loadMemberMap(podDir)
+
+					result, _ := orchestrator.RunBreakaway(
+						lctx, spec, bLog, podCfgCopy, memberMap,
+						a.adapterLookup(),
+						func(e thread.Event) {
+							breakawaySub <- tui.BreakawayEventMsg{
+								Event:   e,
+								Members: spec.Members,
+							}
+						},
+					)
+					breakawaySub <- tui.BreakawayDoneMsg{
+						Summary: result.Summary,
+						Members: spec.Members,
+						LogPath: bLog.Path,
+					}
+				}()
+			},
 		}
 		return loop.Run(lctx)
 	}
@@ -361,7 +382,17 @@ func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *t
 		cosName = podCfg.ChiefOfStaff.ResolvedName()
 	}
 
+	// Pre-load existing events so resumed sessions show the prior
+	// conversation immediately. Fresh sessions have an empty log.
+	initialEvents, _ := log.Load()
+
+	clearSession := func() error { return log.Truncate() }
+	debugRestart := func() error { return os.RemoveAll(root) }
+
 	err = tui.Run(ctx, tui.Options{
+		Root:             root,
+		BreakawayChannel: breakawaySub,
+		InitialEvents:   initialEvents,
 		PodName:         podCfg.Name,
 		SessionID:       sessionID,
 		CoSName:         cosName,
@@ -380,11 +411,30 @@ func (a *App) launchTUIWithSession(ctx context.Context, root, pod string, log *t
 		OnListSessions:  listSessions,
 		OnResumeSession: onResumeSession,
 		OnSwitchPod:     onSwitchPod,
+		OnClear:         clearSession,
+		OnDebugRestart:  debugRestart,
 		OnExportPod:     exportPod,
 		OnDoctor:        runDoctor,
 		OnUsageSnapshot: usageSnapshot,
 	}, a.In, a.Out)
 	return launchResult{resumeSessionID: resumeTarget, switchPodName: switchPodTarget}, err
+}
+
+// loadMemberMap loads all members in a pod directory into a name→*Member map.
+func loadMemberMap(podDir string) map[string]*config.Member {
+	names, err := listMemberNames(podDir)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]*config.Member, len(names))
+	for _, n := range names {
+		mem, err := config.LoadMember(podDir, n)
+		if err != nil {
+			continue
+		}
+		m[n] = mem
+	}
+	return m
 }
 
 // Silence unused imports if some branches are compiled out in tests.

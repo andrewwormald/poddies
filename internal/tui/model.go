@@ -50,6 +50,8 @@ const (
 	ViewHelp
 	// ViewStats is the token / cost drill-down view (R3).
 	ViewStats
+	// ViewSessions is an interactive session picker (arrow keys + Enter).
+	ViewSessions
 )
 
 // StartLoopFn starts an orchestrator loop with the given kickoff
@@ -64,6 +66,7 @@ type Options struct {
 	Members   []string // display-only roster for the header
 	Lead      string
 	StartLoop StartLoopFn
+	Root      string // poddies root dir for prefs persistence
 	// InitialKickoff auto-submits this message on first Update tick.
 	// Set by `poddies run --tui --message "..."` callers.
 	InitialKickoff string
@@ -85,6 +88,12 @@ type Options struct {
 	OnEditMember   func(name, field, value string) error
 	OnListMembers  func() []string
 	OnExportPod    func() ([]byte, error)
+	OnClear        func() error
+	OnDebugRestart func() error
+
+	// BreakawayChannel, if non-nil, receives BreakawayEventMsg and
+	// BreakawayDoneMsg from background breakaway conversations.
+	BreakawayChannel chan any
 
 	// Read-only callbacks for the :pods / :threads / :doctor views.
 	OnListPods    func() []string
@@ -110,6 +119,10 @@ type Options struct {
 	// CoS's messages with a dedicated colour so readers can tell
 	// facilitator messages apart from member messages.
 	CoSName string
+
+	// InitialEvents is pre-loaded when resuming a session so the
+	// transcript shows the prior conversation immediately.
+	InitialEvents []thread.Event
 
 	// OnListSessions returns the recent sessions under this root,
 	// sorted newest first. Used by /resume.
@@ -185,9 +198,21 @@ type Model struct {
 	// values here; Update re-arms a waitForMsg Cmd after each read.
 	sub chan any
 
+	// debug controls whether CoS messages are visible in the transcript.
+	debug bool
+
+	// prefs holds user display preferences loaded from disk.
+	// Updated when the user toggles settings and saved on change.
+	prefs         Prefs
+	prefsApplied  bool // true once size-based defaults have been applied
+
 	// status + error surfaces
 	statusLine string
 	lastErr    error
+
+	// typing indicator: who's currently working (shown during StateRunning)
+	typingWho  string // member name currently processing ("" = unknown)
+	typingTick int    // animation frame counter
 
 	// loop bookkeeping
 	lastStop orchestrator.LoopStopReason
@@ -224,8 +249,16 @@ type Model struct {
 	// paletteInput is the text buffer while the : palette is open.
 	paletteInput string
 
+	// avatarSize controls avatar rendering (Off / Small / Large).
+	// Cycles with 'p'. Default is AvatarSmall.
+	avatarSize AvatarSize
+
+	// breakaways tracks background agent-to-agent conversations.
+	breakawaySub chan any          // separate channel for breakaway events
+	breakaways   []activeBreakaway // currently running breakaways
+
 	// viz panel: toggle with 'v', shows animated member graph.
-	vizOpen     bool
+	vizOpen bool
 	activeLinks []vizLink // in-flight or recently-completed flows
 	lastSpeaker string    // "" = human; used to determine link direction
 }
@@ -240,14 +273,49 @@ func NewModel(opts Options) Model {
 
 	vp := viewport.New(80, 10)
 
-	return Model{
+	// Load persisted prefs; nil fields use size-based defaults (applied in onResize).
+	prefs := LoadPrefs(opts.Root)
+
+	m := Model{
 		opts:       opts,
 		state:      StateIdle,
 		input:      ti,
 		viewport:   vp,
-		sub:        make(chan any, 64),
+		sub: make(chan any, 64),
 		statusLine: "ready",
+		avatarSize: AvatarSmall,
+		debug:      true,
+		prefs:      prefs,
 	}
+	// Apply persisted prefs if set.
+	if prefs.AvatarSize != nil {
+		m.avatarSize = *prefs.AvatarSize
+	}
+	if prefs.Debug != nil {
+		m.debug = *prefs.Debug
+	}
+	if opts.BreakawayChannel != nil {
+		m.breakawaySub = opts.BreakawayChannel
+	} else {
+		m.breakawaySub = make(chan any, 64) // unused but prevents nil panics
+	}
+	if prefs.VizOpen != nil {
+		m.vizOpen = *prefs.VizOpen
+	}
+	if len(opts.InitialEvents) > 0 {
+		m.events = append(m.events, opts.InitialEvents...)
+	}
+	return m
+}
+
+// savePrefs persists the current display settings to disk.
+func (m *Model) savePrefs() {
+	m.prefs = Prefs{
+		VizOpen:    boolPtr(m.vizOpen),
+		AvatarSize: avatarSizePtr(m.avatarSize),
+		Debug:      boolPtr(m.debug),
+	}
+	_ = SavePrefs(m.opts.Root, m.prefs)
 }
 
 // Events returns the events the Model has accumulated. Exported for

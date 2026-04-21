@@ -19,7 +19,7 @@ func (m Model) dispatchSlashCommand(raw string) (tea.Model, tea.Cmd) {
 	arg = strings.TrimSpace(arg)
 	switch head {
 	case "help", "?":
-		m.statusLine = "commands: /add /remove /edit /export /resume /new /help /quit"
+		m.statusLine = "commands: /add /remove /edit /export /resume /clear /new /help /quit"
 	case "quit", "exit":
 		if m.cancelLoop != nil {
 			m.cancelLoop()
@@ -58,6 +58,19 @@ func (m Model) dispatchSlashCommand(raw string) (tea.Model, tea.Cmd) {
 		m = m.activateWizard(w)
 	case "export":
 		return m.handleExport()
+	case "clear":
+		return m.handleClear()
+	case "debug":
+		m.debug = !m.debug
+		label := "off"
+		if m.debug {
+			label = "on"
+		}
+		m.statusLine = "debug: " + label
+		m = m.recalcViewport()
+		m.savePrefs()
+	case "debug-restart":
+		return m.handleDebugRestart()
 	default:
 		m.statusLine = fmt.Sprintf("unknown command: /%s (try /help)", head)
 	}
@@ -104,6 +117,41 @@ func (m Model) wizardSubmit(text string) (tea.Model, tea.Cmd) {
 	return m, waitForSubMsg(m.sub)
 }
 
+// handleDebugRestart deletes the entire .poddies root and quits.
+func (m Model) handleDebugRestart() (tea.Model, tea.Cmd) {
+	if m.opts.OnDebugRestart == nil {
+		m.statusLine = "/debug-restart is not wired"
+		return m, waitForSubMsg(m.sub)
+	}
+	if m.cancelLoop != nil {
+		m.cancelLoop()
+	}
+	if err := m.opts.OnDebugRestart(); err != nil {
+		m.statusLine = "debug-restart failed: " + err.Error()
+		return m, waitForSubMsg(m.sub)
+	}
+	m.state = StateQuit
+	return m, tea.Quit
+}
+
+// handleClear truncates the thread log and clears the transcript.
+func (m Model) handleClear() (tea.Model, tea.Cmd) {
+	if m.opts.OnClear == nil {
+		m.statusLine = "/clear is not wired in this session"
+		return m, waitForSubMsg(m.sub)
+	}
+	if err := m.opts.OnClear(); err != nil {
+		m.statusLine = "clear failed: " + err.Error()
+		return m, waitForSubMsg(m.sub)
+	}
+	m.events = nil
+	if m.ready {
+		m.viewport.SetContent(m.viewportContent(m.chatWidth()))
+	}
+	m.statusLine = "session cleared"
+	return m, waitForSubMsg(m.sub)
+}
+
 // cancelWizard aborts the active wizard without completing it.
 func (m Model) cancelWizard() Model {
 	if m.wizard == nil {
@@ -132,30 +180,10 @@ func (m Model) handleResume(arg string) (tea.Model, tea.Cmd) {
 	}
 	list := m.opts.OnListSessions()
 	if arg == "" {
-		if len(list) == 0 {
-			m.statusLine = "no prior sessions to resume"
-			return m, waitForSubMsg(m.sub)
-		}
-		var b strings.Builder
-		b.WriteString("recent sessions (type /resume <n> or /resume <id>):\n")
-		for i, s := range list {
-			marker := "» " // current session marker
-			if !s.IsCurrent {
-				marker = "  "
-			}
-			last := s.LastSpeaker
-			if last == "" {
-				last = "-"
-			}
-			fmt.Fprintf(&b, "%s%d. %s  pod=%s  turns=%d  last=%s  edited=%s\n",
-				marker, i+1, s.ID, s.Pod, s.TurnCount, last, s.LastEditedAt)
-		}
-		m.events = append(m.events, resumePreview(b.String()))
-		if m.ready {
-			m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, m.viewport.Width))
-			m.viewport.GotoBottom()
-		}
-		m.statusLine = fmt.Sprintf("%d session(s) — pick one with /resume <n> or /resume <id>", len(list))
+		// Open the interactive session picker.
+		m.view = ViewSessions
+		m.cursorPos = 0
+		m.statusLine = ":sessions"
 		return m, waitForSubMsg(m.sub)
 	}
 	// Numeric pick: /resume 1 resumes list[0].
@@ -258,7 +286,7 @@ func (m Model) appendGuideEvent(msg string) Model {
 		Body: msg,
 	})
 	if m.ready {
-		m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, m.viewport.Width))
+		m.viewport.SetContent(m.viewportContent(m.viewport.Width))
 		m.viewport.GotoBottom()
 	}
 	return m
@@ -283,7 +311,7 @@ func (m Model) handleExport() (tea.Model, tea.Cmd) {
 	// block so the user can select/copy it without leaving the TUI.
 	m.events = append(m.events, exportPreview(data))
 	if m.ready {
-		m.viewport.SetContent(renderTranscript(m.events, m.opts.CoSName, m.viewport.Width))
+		m.viewport.SetContent(m.viewportContent(m.viewport.Width))
 		m.viewport.GotoBottom()
 	}
 	return m, waitForSubMsg(m.sub)

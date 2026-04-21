@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -26,6 +27,8 @@ func (m Model) renderActiveView() string {
 		return m.renderHelpView()
 	case ViewStats:
 		return m.renderStatsView()
+	case ViewSessions:
+		return m.renderSessionsView()
 	default:
 		return m.renderThreadView()
 	}
@@ -55,12 +58,15 @@ func (m Model) renderThreadView() string {
 	}
 
 	if m.vizOpen {
-		// Build a thin divider column as tall as the viewport.
+		// Header and footer span full width; the viz panel sits beside
+		// the chat body only — not beside the header/footer.
 		divLines := strings.Repeat("│\n", m.viewport.Height-1) + "│"
 		divider := metaStyle.Render(divLines)
 		viz := m.renderVizPanel(m.viewport.Height)
 		mid := lipgloss.JoinHorizontal(lipgloss.Top, body, divider, viz)
-		return lipgloss.JoinVertical(lipgloss.Top, header, mid, footer)
+		// Force header to full width so it doesn't get clipped.
+		fullHeader := lipgloss.NewStyle().Width(m.width).Render(header)
+		return lipgloss.JoinVertical(lipgloss.Top, fullHeader, mid, footer)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Top, header, body, footer)
@@ -170,6 +176,62 @@ func (m Model) renderThreadsView() string {
 	return m.renderViewFrame(":threads · "+m.opts.PodName, b.String())
 }
 
+func (m Model) renderSessionsView() string {
+	if m.opts.OnListSessions == nil {
+		return m.renderViewFrame(":sessions", metaStyle.Render("\n  (session listing not wired in this session)\n"))
+	}
+	list := m.opts.OnListSessions()
+	cursor := m.cursorPos
+	if len(list) > 0 && cursor >= len(list) {
+		cursor = len(list) - 1
+	}
+	var b strings.Builder
+	b.WriteString("\n")
+	if len(list) == 0 {
+		b.WriteString(metaStyle.Render("  (no sessions yet)\n"))
+	} else {
+		for i, s := range list {
+			marker := "  "
+			if i == cursor {
+				marker = "▶ "
+			}
+			current := ""
+			if s.IsCurrent {
+				current = " (current)"
+			}
+			last := s.LastSpeaker
+			if last == "" {
+				last = "-"
+			}
+			nameStyle := lipgloss.NewStyle().Bold(i == cursor).Underline(i == cursor)
+			fmt.Fprintf(&b, "%s%-28s pod=%-10s turns=%-4d last=%-12s %s%s\n",
+				marker, nameStyle.Render(s.ID),
+				s.Pod, s.TurnCount, last, s.LastEditedAt, current)
+		}
+	}
+	b.WriteString("\n")
+	b.WriteString(metaStyle.Render("  ↑↓ navigate · Enter resume session · Esc back"))
+	return m.renderViewFrame(":sessions · "+m.opts.PodName, b.String())
+}
+
+// selectCurrentSession resumes the session at cursorPos in the :sessions view.
+func (m Model) selectCurrentSession() (tea.Model, tea.Cmd) {
+	if m.opts.OnListSessions == nil || m.opts.OnResumeSession == nil {
+		m.statusLine = "session resume not wired"
+		return m, waitForSubMsg(m.sub)
+	}
+	list := m.opts.OnListSessions()
+	if len(list) == 0 {
+		m.statusLine = "no sessions to resume"
+		return m, waitForSubMsg(m.sub)
+	}
+	pos := m.cursorPos
+	if pos >= len(list) {
+		pos = len(list) - 1
+	}
+	return m.doResume(list[pos].ID)
+}
+
 func (m Model) renderPermsView() string {
 	var b strings.Builder
 	b.WriteString("\n")
@@ -216,6 +278,7 @@ func (m Model) renderHelpView() string {
     :members   pod member list
     :pods      pods in this root
     :threads   threads in this pod
+    :sessions  session picker (resume old sessions)
     :perms     pending permission requests
     :stats     token / cost drill-down
     :doctor    adapter + root health check
@@ -223,18 +286,20 @@ func (m Model) renderHelpView() string {
     :quit      exit
 
   In the chat view:
-    /add, /remove, /edit, /export, /resume, /stats, /help, /quit
+    /add, /remove, /edit, /export, /resume, /clear, /stats, /help, /quit
     Esc cancels an active wizard
     a / d / A / D  approve / deny pending permissions
 
-  In :pods and :threads views:
+  In :pods, :threads, and :sessions views:
     ↑ / ↓   move cursor
-    Enter   switch to selected pod or open thread
+    Enter   switch to selected item
     Esc     return to :thread
 
   Global:
     :   open palette
     ?   open this help
+    v   toggle viz panel
+    p   cycle avatar size (small / large / off)
     Esc go back to :thread
     Ctrl-C  quit (also cancels an in-flight loop)
 `
@@ -277,7 +342,7 @@ func (m Model) renderStatsView() string {
 		fmt.Fprintf(&b, "  %-20s %d\n", name, n)
 	}
 	if humanCount > 0 || len(counts) == 0 {
-		fmt.Fprintf(&b, "  %-20s %d\n", "human", humanCount)
+		fmt.Fprintf(&b, "  %-20s %d\n", "me", humanCount)
 	}
 
 	return m.renderViewFrame(":stats", b.String())

@@ -77,7 +77,7 @@ func TestViewGolden_WizardModal(t *testing.T) {
 	w := &Wizard{
 		Title: "Add member",
 		Steps: []WizardStep{
-			{Question: "Member name? (slug: lowercase, hyphens only)"},
+			{Question: "Name (slug, e.g. alice):"},
 			{Question: "Adapter?", Choices: []string{"claude", "gemini", "mock"}, AllowCustom: true},
 			{Question: "Persona (optional)", Optional: true},
 		},
