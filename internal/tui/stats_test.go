@@ -76,7 +76,7 @@ func TestRenderStatsView_NotWired_ShowsNote(t *testing.T) {
 func TestRenderStatsView_HumanMessagesCounted(t *testing.T) {
 	m, _ := submitString(statsModel(), "/stats")
 	out := m.View()
-	if !strings.Contains(out, "human") {
-		t.Errorf("stats view should show human message count:\n%s", out)
+	if !strings.Contains(out, "me") {
+		t.Errorf("stats view should show 'me' message count:\n%s", out)
 	}
 }

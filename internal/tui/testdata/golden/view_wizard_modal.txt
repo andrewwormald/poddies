@@ -8,7 +8,7 @@
       │                                                                  │
       │  Add member · step 1/3                                           │
       │                                                                  │
-      │  Member name? (slug: lowercase, hyphens only)                    │
+      │  Name (slug, e.g. alice):                                        │
       │                                                                  │
       │  > type a message, Enter to send, Ctrl-C to quit                 │
       │                                                                  │

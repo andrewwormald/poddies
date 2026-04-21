@@ -129,25 +129,22 @@ func (m Model) renderVizPanel(panelH int) string {
 			if displayName == "" {
 				displayName = "you"
 			}
+			av := AvatarFor(name)
+			face := av.RenderSmall()
+			inBreakaway := m.isInBreakaway(name)
 			if hasDot {
-				// Dot is passing through / at a node — show a flowing marker.
 				ch := "↓"
 				if !goingDown {
 					ch = "↑"
 				}
-				rows = append(rows, "  "+dotStyle.Render(ch+" "+displayName))
+				rows = append(rows, " "+dotStyle.Render(ch)+" "+face+" "+displayName)
+			} else if inBreakaway {
+				bStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+				rows = append(rows, "   "+face+" "+bStyle.Render(displayName+" ◈"))
 			} else if isActive(name) {
-				node := "◉"
-				if name == "" {
-					node = "◎"
-				}
-				rows = append(rows, "  "+liveStyle.Render(node+" "+displayName))
+				rows = append(rows, "   "+face+" "+liveStyle.Render(displayName))
 			} else {
-				node := "◯"
-				if name == "" {
-					node = "◎"
-				}
-				rows = append(rows, "  "+dimStyle.Render(node+" "+displayName))
+				rows = append(rows, "   "+face+" "+dimStyle.Render(displayName))
 			}
 		case hasDot:
 			ch := "↓"
@@ -168,6 +165,18 @@ func (m Model) renderVizPanel(panelH int) string {
 	return lipgloss.NewStyle().
 		Width(vizPanelW).
 		Render(strings.Join(rows, "\n"))
+}
+
+// isInBreakaway reports whether name is participating in an active breakaway.
+func (m Model) isInBreakaway(name string) bool {
+	for _, ba := range m.breakaways {
+		for _, member := range ba.Members {
+			if member == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // vizSliceIdx returns the index of v in s, or -1.

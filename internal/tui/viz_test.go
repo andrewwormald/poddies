@@ -155,9 +155,9 @@ func TestViz_RenderPanel_ActiveNodeHighlighted(t *testing.T) {
 		{from: "alice", to: "bob", startAt: time.Now()},
 	}
 	panel := m.renderVizPanel(20)
-	// Panel should contain ◉ (active node marker) for alice or bob.
-	if !strings.Contains(panel, "◉") {
-		t.Errorf("active node should render ◉, panel:\n%s", panel)
+	// Active links should show arrow flow markers (↓ or ↑).
+	if !strings.Contains(panel, "↓") && !strings.Contains(panel, "↑") {
+		t.Errorf("active link should render flow arrow, panel:\n%s", panel)
 	}
 }
 

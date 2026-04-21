@@ -39,7 +39,7 @@ func colorFor(name string) lipgloss.Color {
 	if name == "" {
 		return systemColor
 	}
-	if name == "human" {
+	if name == "human" || name == "me" {
 		return humanColor
 	}
 	h := fnv.New32a()
@@ -62,7 +62,7 @@ func styledName(name, cosName string) string {
 		c = systemColor
 	case cosName != "" && name == cosName:
 		c = cosColor
-	case name == "human":
+	case name == "human" || name == "me":
 		c = humanColor
 	default:
 		c = colorFor(name)
